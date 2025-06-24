@@ -6,7 +6,7 @@ import os
 import joblib
 from learn import parse_shr_file, extract_features
 
-HOST = '192.168.2.10'  #signal hound ip
+HOST = '192.168.86.26'  #signal hound ip
 PORT = 5025  #scpi port
 
 #function to load the model from predict.py
@@ -29,7 +29,7 @@ def predict_file(model, file_path):
         return None, None
 
 #load the model
-model_path = './model/sanford_19-22_model.joblib'
+model_path = './model/plane_detector_2.joblib'
 try:
     model = load_model(model_path)
 except Exception as e:
@@ -47,31 +47,46 @@ while True:
             response = s.recv(1024).decode('utf-8')
             print(f"Device Response: {response}")
 
-            s.sendall(b'REC:START\n')
+            #s.sendall(b'INSTRUMENT:SELECT SA\n')
+
+            #s.sendall(b'INIT:CONT OFF\n')
+
+            output_directory = 'C:\\Users\\kaido\\repos\\passive_detection_ai\\recordings\\'
+            save_command = f'REC:SWEEP:FILE:DIR {output_directory}\n'.encode('utf-8')
+            s.sendall(save_command)
+
+            s.sendall(b'REC:SWEEP:START\n')
             print("Recording started...")
 
             time.sleep(10)
 
-            s.sendall(b'REC:STOP\n')
+            s.sendall(b'REC:SWEEP:STOP\n')
             print("Recording stopped.")
 
-            output_directory = 'recordings/'
-            output_filename = 'recorded_data.shr'
+            #save_command = f'REC:SWEEP:FILE:DIR {output_directory}{output_filename}\n'.encode('utf-8')
+            #s.sendall(save_command)            print(f"Recording saved to {output_directory}")
 
-            save_command = f'REC:SAVE {output_directory}{output_filename}\n'.encode('utf-8')
-            s.sendall(save_command)
-            print(f"Recording saved to {output_directory}{output_filename}")
-
-            #run the saved file against the model
-            if model:
-                prediction, probability = predict_file(model, f'{output_directory}{output_filename}')
-                if prediction is not None:
-                    if prediction == 1:
-                        print(f"PLANE DETECTED with {probability[1]:.2f} confidence")
-                    else:
-                        print(f"NO PLANE DETECTED with {probability[0]:.2f} confidence")
+            time.sleep(2)
+            try:
+                files = [os.path.join(output_directory, f) for f in os.listdir(output_directory) if os.path.isfile(os.path.join(output_directory, f))]
+                if files:
+                    newest_file = max(files, key=os.path.getmtime)
+                    print(f"Using newest file: {newest_file}")
+                    
+                    #run the newest file against the model
+                    if model:
+                        prediction, probability = predict_file(model, newest_file)
+                        if prediction is not None:
+                            if prediction == 1:
+                                print(f"PLANE DETECTED with {probability[1]:.2f} confidence")
+                            else:
+                                print(f"NO PLANE DETECTED with {probability[0]:.2f} confidence")
+                        else:
+                            print("Prediction failed.")
                 else:
-                    print("Prediction failed.")
+                    print("No files found in the recordings directory.")
+            except Exception as e:
+                print(f"Error finding or processing recorded files: {str(e)}")
 
 
     except Exception as e:
