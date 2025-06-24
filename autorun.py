@@ -19,77 +19,101 @@ def load_model(model_path):
 def predict_file(model, file_path):
     try:
         spectral_data = parse_shr_file(file_path)
+        
+        # Check if spectral_data is valid
+        if spectral_data is None or len(spectral_data) == 0:
+            print(f"Error: No spectral data found in {file_path}")
+            return None, None
+        
+        # Debug: Print shape of spectral data to understand structure
+        print(f"Spectral data shape: {np.shape(spectral_data)}")
+        
+        # Extract features from the spectral data
         features = extract_features(spectral_data)
+        
+        # Debug: Print the extracted features
+        print(f"Extracted features: {features}")
+        
         features = features.reshape(1, -1)
         prediction = model.predict(features)[0]
         probability = model.predict_proba(features)[0]
         return prediction, probability
     except Exception as e:
         print(f"Error processing file {file_path}: {str(e)}")
+        import traceback
+        traceback.print_exc()  # Print the full traceback for better debugging
         return None, None
 
 #load the model
-model_path = './model/plane_detector_2.joblib'
+model_path = './model/plane_detector.joblib'
 try:
     model = load_model(model_path)
 except Exception as e:
     print(f"Error loading model: {str(e)}")
     model = None
 
-while True:
-    #signal hound connect
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((HOST, PORT))
-            print("Connected to Signal Hound Spike")
-
-            s.sendall(b'*IDN?\n')
-            response = s.recv(1024).decode('utf-8')
-            print(f"Device Response: {response}")
-
-            #s.sendall(b'INSTRUMENT:SELECT SA\n')
-
-            #s.sendall(b'INIT:CONT OFF\n')
-
-            output_directory = 'C:\\Users\\kaido\\repos\\passive_detection_ai\\recordings\\'
-            save_command = f'REC:SWEEP:FILE:DIR {output_directory}\n'.encode('utf-8')
-            s.sendall(save_command)
-
+try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((HOST, PORT))
+        print("Connected to Signal Hound Spike")
+        s.sendall(b'*IDN?\n')
+        response = s.recv(1024).decode('utf-8')
+        print(f"Device Response: {response}")
+        
+        s.sendall(b'SENS:FREQ:CENT 1.5e9\n')
+        s.sendall(b'SENS:FREQ:SPAN 3e9\n')
+        s.sendall(b'SENS:FREQ:CENT:STEP 1e6\n')
+        
+        # Configure for multiple sweeps
+        s.sendall(b'INIT:CONT ON\n')  # Set continuous sweep mode ON
+        
+        output_directory = 'C:\\Users\\kaido\\repos\\passive_detection_ai\\recordings\\'
+        save_command = f'REC:SWEEP:FILE:DIR {output_directory}\n'.encode('utf-8')
+        s.sendall(save_command)
+    
+        while(True):
+            s.sendall(b'SYSTEM:CLEAR\n')
+            
             s.sendall(b'REC:SWEEP:START\n')
-            print("Recording started...")
+            print("Recording started with multiple sweeps...")
 
-            time.sleep(10)
+            time.sleep(20)
 
             s.sendall(b'REC:SWEEP:STOP\n')
             print("Recording stopped.")
-
-            #save_command = f'REC:SWEEP:FILE:DIR {output_directory}{output_filename}\n'.encode('utf-8')
-            #s.sendall(save_command)            print(f"Recording saved to {output_directory}")
-
+            print(f"Recording saved to {output_directory}")
+            
             time.sleep(2)
             try:
-                files = [os.path.join(output_directory, f) for f in os.listdir(output_directory) if os.path.isfile(os.path.join(output_directory, f))]
+                files = [os.path.join(output_directory, f) for f in os.listdir(output_directory) if os.path.isfile(os.path.join(output_directory, f)) and f.endswith('.shr')]
                 if files:
                     newest_file = max(files, key=os.path.getmtime)
-                    print(f"Using newest file: {newest_file}")
+                    print(f"Using newest file: {newest_file}") #run the newest file against the model
+                    print(f"File size: {os.path.getsize(newest_file)} bytes, Last modified: {time.ctime(os.path.getmtime(newest_file))}")
                     
-                    #run the newest file against the model
                     if model:
+                        # Check model type for debugging
+                        print(f"Model type: {type(model).__name__}")
+                        
                         prediction, probability = predict_file(model, newest_file)
                         if prediction is not None:
                             if prediction == 1:
                                 print(f"PLANE DETECTED with {probability[1]:.2f} confidence")
+                                print(f"Full probability array: {probability}")
                             else:
                                 print(f"NO PLANE DETECTED with {probability[0]:.2f} confidence")
+                                print(f"Full probability array: {probability}")
                         else:
                             print("Prediction failed.")
                 else:
-                    print("No files found in the recordings directory.")
+                    print("No .shr files found in the recordings directory.")
             except Exception as e:
                 print(f"Error finding or processing recorded files: {str(e)}")
+                import traceback
+                traceback.print_exc()  # Print the full traceback for better debugging
+
+except Exception as e:
+    print(f"Failed to connect to Signal Hound Spike: {e}")
 
 
-    except Exception as e:
-        print(f"Failed to connect to Signal Hound Spike: {e}")
 
-    time.sleep(5)
