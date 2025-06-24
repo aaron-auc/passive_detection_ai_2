@@ -6,7 +6,7 @@ import os
 import joblib
 from learn import parse_shr_file, extract_features
 
-HOST = '192.168.86.26'  #signal hound ip
+HOST = '192.168.1.132'  #signal hound ip
 PORT = 5025  #scpi port
 
 #function to load the model from predict.py
@@ -45,7 +45,7 @@ def predict_file(model, file_path):
         return None, None
 
 #load the model
-model_path = './model/plane_detector.joblib'
+model_path = './model/sanford_test2.joblib'
 try:
     model = load_model(model_path)
 except Exception as e:
@@ -62,34 +62,53 @@ try:
         
         s.sendall(b'SENS:FREQ:CENT 1.5e9\n')
         s.sendall(b'SENS:FREQ:SPAN 3e9\n')
-        s.sendall(b'SENS:FREQ:CENT:STEP 1e6\n')
-        
-        # Configure for multiple sweeps
+        s.sendall(b'SENS:FREQ:CENT:STEP 1e4\n')
+          # Configure for multiple sweeps
         s.sendall(b'INIT:CONT ON\n')  # Set continuous sweep mode ON
-        
         output_directory = 'C:\\Users\\kaido\\repos\\passive_detection_ai\\recordings\\'
         save_command = f'REC:SWEEP:FILE:DIR {output_directory}\n'.encode('utf-8')
         s.sendall(save_command)
-    
+        
         while(True):
             s.sendall(b'SYSTEM:CLEAR\n')
-            
             s.sendall(b'REC:SWEEP:START\n')
             print("Recording started with multiple sweeps...")
-
-            time.sleep(20)
+            time.sleep(10)
 
             s.sendall(b'REC:SWEEP:STOP\n')
             print("Recording stopped.")
             print(f"Recording saved to {output_directory}")
             
-            time.sleep(2)
+            # Ask user if plane was present during recording
+            plane_present = input("Was a plane present during this recording? (y/n): ").lower().strip()
+            
             try:
+                # Get the newest file
                 files = [os.path.join(output_directory, f) for f in os.listdir(output_directory) if os.path.isfile(os.path.join(output_directory, f)) and f.endswith('.shr')]
                 if files:
                     newest_file = max(files, key=os.path.getmtime)
-                    print(f"Using newest file: {newest_file}") #run the newest file against the model
+                    print(f"Found newest file: {newest_file}")
+                    
+                    # Determine destination folder based on user input
+                    if plane_present in ('y', 'yes'):
+                        dest_folder = os.path.join(output_directory, 'data', 'with_plane')
+                    else:
+                        dest_folder = os.path.join(output_directory, 'data', 'without_plane')
+                    
+                    # Ensure destination folder exists
+                    os.makedirs(dest_folder, exist_ok=True)
+                    
+                    # Move file to appropriate folder
+                    file_name = os.path.basename(newest_file)
+                    destination = os.path.join(dest_folder, file_name)
+                    import shutil
+                    shutil.move(newest_file, destination)
+                    print(f"Moved file to {destination}")
+                    newest_file = destination
+                
                     print(f"File size: {os.path.getsize(newest_file)} bytes, Last modified: {time.ctime(os.path.getmtime(newest_file))}")
+                    
+                    print("Plane or no plane? (Model prediction)")
                     
                     if model:
                         # Check model type for debugging
