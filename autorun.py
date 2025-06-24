@@ -20,18 +20,18 @@ def predict_file(model, file_path):
     try:
         spectral_data = parse_shr_file(file_path)
         
-        # Check if spectral_data is valid
+        #check if spectral_data is valid
         if spectral_data is None or len(spectral_data) == 0:
             print(f"Error: No spectral data found in {file_path}")
             return None, None
         
-        # Debug: Print shape of spectral data to understand structure
+        #debug: Print shape of spectral data to understand structure
         print(f"Spectral data shape: {np.shape(spectral_data)}")
         
-        # Extract features from the spectral data
+        #extract features from the spectral data
         features = extract_features(spectral_data)
         
-        # Debug: Print the extracted features
+        #debug: Print the extracted features
         print(f"Extracted features: {features}")
         
         features = features.reshape(1, -1)
@@ -41,7 +41,7 @@ def predict_file(model, file_path):
     except Exception as e:
         print(f"Error processing file {file_path}: {str(e)}")
         import traceback
-        traceback.print_exc()  # Print the full traceback for better debugging
+        traceback.print_exc()
         return None, None
 
 #load the model
@@ -63,8 +63,8 @@ try:
         s.sendall(b'SENS:FREQ:CENT 1.5e9\n')
         s.sendall(b'SENS:FREQ:SPAN 3e9\n')
         s.sendall(b'SENS:FREQ:CENT:STEP 1e4\n')
-          # Configure for multiple sweeps
-        s.sendall(b'INIT:CONT ON\n')  # Set continuous sweep mode ON
+        
+        s.sendall(b'INIT:CONT ON\n')
         output_directory = 'C:\\Users\\kaido\\repos\\passive_detection_ai\\recordings\\'
         save_command = f'REC:SWEEP:FILE:DIR {output_directory}\n'.encode('utf-8')
         s.sendall(save_command)
@@ -79,26 +79,25 @@ try:
             print("Recording stopped.")
             print(f"Recording saved to {output_directory}")
             
-            # Ask user if plane was present during recording
             plane_present = input("Was a plane present during this recording? (y/n): ").lower().strip()
             
             try:
-                # Get the newest file
+                #get the newest file
                 files = [os.path.join(output_directory, f) for f in os.listdir(output_directory) if os.path.isfile(os.path.join(output_directory, f)) and f.endswith('.shr')]
                 if files:
                     newest_file = max(files, key=os.path.getmtime)
                     print(f"Found newest file: {newest_file}")
                     
-                    # Determine destination folder based on user input
+                    #determine destination folder based on user input
                     if plane_present in ('y', 'yes'):
                         dest_folder = os.path.join(output_directory, 'data', 'with_plane')
                     else:
                         dest_folder = os.path.join(output_directory, 'data', 'without_plane')
                     
-                    # Ensure destination folder exists
+                    #ensure destination folder exists
                     os.makedirs(dest_folder, exist_ok=True)
                     
-                    # Move file to appropriate folder
+                    #move file to appropriate folder
                     file_name = os.path.basename(newest_file)
                     destination = os.path.join(dest_folder, file_name)
                     import shutil
@@ -111,7 +110,7 @@ try:
                     print("Plane or no plane? (Model prediction)")
                     
                     if model:
-                        # Check model type for debugging
+                        #check model type for debugging
                         print(f"Model type: {type(model).__name__}")
                         
                         prediction, probability = predict_file(model, newest_file)
@@ -129,7 +128,7 @@ try:
             except Exception as e:
                 print(f"Error finding or processing recorded files: {str(e)}")
                 import traceback
-                traceback.print_exc()  # Print the full traceback for better debugging
+                traceback.print_exc()  #print the full traceback for better debugging
 
 except Exception as e:
     print(f"Failed to connect to Signal Hound Spike: {e}")
