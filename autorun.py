@@ -6,16 +6,16 @@ import os
 import joblib
 from learn import parse_shr_file, extract_features
 
-HOST = '192.168.1.132'  #signal hound ip
+HOST = '192.168.0.80'  #signal hound ip
 PORT = 5025  #scpi port
 
-#function to load the model from predict.py
+#function to load the model
 def load_model(model_path):
     model = joblib.load(model_path)
     print(f"Model loaded from {model_path}")
     return model
 
-#function to predict using the model from predict.py
+#function to predict using the model
 def predict_file(model, file_path):
     try:
         spectral_data = parse_shr_file(file_path)
@@ -24,14 +24,11 @@ def predict_file(model, file_path):
         if spectral_data is None or len(spectral_data) == 0:
             print(f"Error: No spectral data found in {file_path}")
             return None, None
-        
-        #debug: Print shape of spectral data to understand structure
+    
         print(f"Spectral data shape: {np.shape(spectral_data)}")
-        
-        #extract features from the spectral data
+    
         features = extract_features(spectral_data)
         
-        #debug: Print the extracted features
         print(f"Extracted features: {features}")
         
         features = features.reshape(1, -1)
@@ -65,7 +62,7 @@ try:
         s.sendall(b'SENS:FREQ:CENT:STEP 1e4\n')
         
         s.sendall(b'INIT:CONT ON\n')
-        output_directory = 'C:\\Users\\kaido\\repos\\passive_detection_ai\\recordings\\'
+        output_directory = 'C:\\Users\\Kai\\repos\\passive_detection_ai\\recordings\\'
         save_command = f'REC:SWEEP:FILE:DIR {output_directory}\n'.encode('utf-8')
         s.sendall(save_command)
         
@@ -128,10 +125,7 @@ try:
             except Exception as e:
                 print(f"Error finding or processing recorded files: {str(e)}")
                 import traceback
-                traceback.print_exc()  #print the full traceback for better debugging
+                traceback.print_exc()
 
 except Exception as e:
     print(f"Failed to connect to Signal Hound Spike: {e}")
-
-
-
