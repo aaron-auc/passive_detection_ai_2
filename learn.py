@@ -31,10 +31,10 @@ def parse_shr_file(file_path):
 
 def extract_features(spectral_data):
     #some files are too large, so limit the data points for large files for now until performance is better
-    max_data_points = 150000
-    if len(spectral_data) > max_data_points:
-        indices = np.linspace(0, len(spectral_data)-1, max_data_points, dtype=int)
-        spectral_data = spectral_data[indices]
+    #max_data_points = 150000
+    #if len(spectral_data) > max_data_points:
+    #    indices = np.linspace(0, len(spectral_data)-1, max_data_points, dtype=int)
+    #    spectral_data = spectral_data[indices]
     
     spectral_data = np.nan_to_num(spectral_data, nan=0.0, posinf=0.0, neginf=0.0)
     
