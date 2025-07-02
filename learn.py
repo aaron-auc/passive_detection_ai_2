@@ -16,6 +16,9 @@ from scipy import signal
 import argparse
 from scipy.fft import rfft
 
+np.random.seed(42)
+import random
+random.seed(42)
 
 #TODO: make sure file is being parsed correctly
 def parse_shr_file(file_path):
@@ -240,7 +243,7 @@ def train_model(X, y):
     )
     
     #use randomforst, gradient boosting, and svm
-    rf = RandomForestClassifier(n_estimators=100, random_state=42)
+    #rf = RandomForestClassifier(n_estimators=100, random_state=42)
     gb = GradientBoostingClassifier(n_estimators=100, random_state=42)
     svm = SVC(kernel='rbf', probability=True, random_state=42)
 
@@ -248,7 +251,8 @@ def train_model(X, y):
     model = Pipeline([
         ('scaler', StandardScaler()),
         ('classifier', VotingClassifier(
-            estimators=[('rf', rf), ('gb', gb), ('svm', svm)],
+            #estimators=[('rf', rf), ('gb', gb), ('svm', svm)],
+            estimators=[('gb', gb), ('svm', svm)],
             voting='soft'
         ))
     ])
