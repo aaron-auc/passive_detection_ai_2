@@ -23,11 +23,24 @@ random.seed(42)
 #TODO: make sure file is being parsed correctly
 def parse_shr_file(file_path):
     with open(file_path, 'rb') as f:
-        header_size = 16384
-        header = f.read(header_size)
         trace_data = np.fromfile(f, dtype=np.float32)
+        #skip the first 130 data points, header
+        trace_data = trace_data[130:]
         
-    return trace_data
+        #process to skip 12 values after every 38,402 values (one sweep)
+        result = []
+        i = 0
+        half_sweep_size = 19201  # Only use first half of the sweep (38402 / 2)
+        
+        while i < len(trace_data):
+            #add only first half of the sweep (19201 values)
+            chunk_end = min(i + half_sweep_size, len(trace_data))
+            result.extend(trace_data[i:chunk_end])
+            
+            #skip to the beginning of the next sweep
+            i = i + 38402 + 12  # Skip full sweep + header for next sweep
+        
+        return np.array(result, dtype=np.float32)
 
 def extract_features(spectral_data):
     #some files are too large, so limit the data points for large files for now until performance is better
@@ -36,17 +49,18 @@ def extract_features(spectral_data):
     #    indices = np.linspace(0, len(spectral_data)-1, max_data_points, dtype=int)
     #    spectral_data = spectral_data[indices]
     
-    spectral_data = np.nan_to_num(spectral_data, nan=0.0, posinf=0.0, neginf=0.0)
+    #spectral_data = np.nan_to_num(spectral_data, nan=0.0, posinf=0.0, neginf=0.0)
     
     features = []
     
     #calculate basic statistics
     features.append(np.mean(spectral_data))
-    features.append(np.std(spectral_data))
-    features.append(np.max(spectral_data))
-    features.append(np.argmax(spectral_data))
+    #features.append(np.std(spectral_data))
+    #features.append(np.max(spectral_data))
+    #features.append(np.argmax(spectral_data))
     
-    #calculate skewness and kurtosis
+    
+    """#calculate skewness and kurtosis
     try:
         safe_data = np.abs(spectral_data) + 1e-10
         log_values = np.log(safe_data)
@@ -63,9 +77,9 @@ def extract_features(spectral_data):
         features.append(spectral_flatness)
     except Exception as e:
         print(f"Warning: Error calculating spectral flatness: {str(e)}")
-        features.append(0.0)
+        features.append(0.0)"""
     
-    #frequency domain features
+    """#frequency domain features
     try:
         fft_result = np.abs(rfft(spectral_data))
         
@@ -92,14 +106,14 @@ def extract_features(spectral_data):
             features.append(band_energy / total_energy)
     except Exception as e:
         print(f"Warning: Error calculating frequency domain features: {str(e)}")
-        features.extend([0.0] * (bands + 1))
+        features.extend([0.0] * (bands + 1))"""
 
     #signal energy and entropy
     try:
         mean_energy = np.mean(spectral_data**2)
         features.append(mean_energy)
         
-        if len(psd) > 10000:
+        """if len(psd) > 10000:
             step = len(psd) // 10000
             psd_sample = psd[::step]
         else:
@@ -112,12 +126,12 @@ def extract_features(spectral_data):
                                      np.log2(normalized_psd[non_zero_mask]))
         else:
             spectral_entropy = 0.0
-        features.append(spectral_entropy)
+        features.append(spectral_entropy)"""
     except Exception as e:
         print(f"Warning: Error calculating signal energy features: {str(e)}")
         features.extend([0.0, 0.0])
         
-    #signal variance over time windows
+    """#signal variance over time windows
     try:
         max_windows = 20
         window_size = max(len(spectral_data) // max_windows, 1)
@@ -139,9 +153,9 @@ def extract_features(spectral_data):
             features.extend([0.0, 0.0, 0.0])
     except Exception as e:
         print(f"Warning: Error calculating window variance: {str(e)}")
-        features.extend([0.0, 0.0, 0.0])
+        features.extend([0.0, 0.0, 0.0])"""
 
-    #correlation and autocorrelation
+    """#correlation and autocorrelation
     try:
         max_lag = min(1000, len(spectral_data)//10)
         
@@ -168,7 +182,7 @@ def extract_features(spectral_data):
         features.extend(ac_values)
     except Exception as e:
         print(f"Warning: Error calculating autocorrelation: {str(e)}")
-        features.extend([0.0, 0.0, 0.0])
+        features.extend([0.0, 0.0, 0.0])"""
         
     #signal-to-noise ratio
     try:
@@ -239,13 +253,13 @@ def train_model(X, y):
     #split the dataset into training and testing sets. should probably set a better split or get rid of this entirely.
     #just useful for quick testing
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=0.2
     )
     
     #use randomforst, gradient boosting, and svm
     #rf = RandomForestClassifier(n_estimators=100, random_state=42)
-    gb = GradientBoostingClassifier(n_estimators=100, random_state=42)
-    svm = SVC(kernel='rbf', probability=True, random_state=42)
+    gb = GradientBoostingClassifier(n_estimators=100)
+    svm = SVC(kernel='rbf', probability=True)
 
     #use a voting classifier with soft voting
     model = Pipeline([
