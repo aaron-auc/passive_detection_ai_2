@@ -1,6 +1,8 @@
 /data/
 /recordings/
 /parse_output/
+/model/
+/environment/
 debug_features.py
 debug_shr_file.py
 Data_Analysis.xlsx

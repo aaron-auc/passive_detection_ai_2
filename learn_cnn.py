@@ -26,19 +26,22 @@ def parse_shr_file(file_path):
         trace_data = trace_data[130:]
         
         #process to skip 12 values after every 38,402 values (one sweep)
-        result = []
+        sweeps = []
         i = 0
         half_sweep_size = 19201  # Only use first half of the sweep (38402 / 2)
         
-        while i < len(trace_data):
-            #add only first half of the sweep (19201 values)
-            chunk_end = min(i + half_sweep_size, len(trace_data))
-            result.extend(trace_data[i:chunk_end])
+        while i + half_sweep_size <= len(trace_data):
+            # Extract first half of current sweep
+            sweep_data = trace_data[i:i+half_sweep_size]
             
-            #skip to the beginning of the next sweep
+            # Skip any sweeps that seem incomplete
+            if len(sweep_data) == half_sweep_size:
+                sweeps.append(sweep_data[:19200])  # Store as separate sweep, trim to target length
+            
+            # Move to next sweep
             i = i + 38402 + 12  # Skip full sweep + header for next sweep
         
-        return np.array(result, dtype=np.float32)
+        return sweeps  # Return a list of individual sweeps
 
 def preprocess_for_cnn(spectral_data, target_length=19200):
     """
@@ -68,7 +71,7 @@ def create_cnn_model(input_shape=(19200, 1)):
         # First convolutional layer
         Conv1D(filters=32, kernel_size=64, activation='relu', input_shape=input_shape),
         BatchNormalization(),
-        MaxPooling1D(pool_size=8),
+        MaxPooling1D(pool_size=4),
         
         # Second convolutional layer
         Conv1D(filters=64, kernel_size=32, activation='relu'),
@@ -79,23 +82,67 @@ def create_cnn_model(input_shape=(19200, 1)):
         Conv1D(filters=128, kernel_size=16, activation='relu'),
         BatchNormalization(),
         MaxPooling1D(pool_size=2),
-        Dropout(0.3),
+        Dropout(0.4),
+        
+        # Fourth convolutional layer (added)
+        Conv1D(filters=256, kernel_size=8, activation='relu'),
+        BatchNormalization(),
+        MaxPooling1D(pool_size=2),
+        Dropout(0.4),
         
         # Flatten and dense layers
         Flatten(),
-        Dense(128, activation='relu'),
+        Dense(256, activation='relu'),  # Increased from 128 to 256
+        BatchNormalization(),
         Dropout(0.5),
+        Dense(64, activation='relu'),   # Added intermediate layer
+        BatchNormalization(),
+        Dropout(0.3),
         Dense(1, activation='sigmoid')  # Binary classification
     ])
     
     # Compile the model
     model.compile(
-        optimizer=Adam(learning_rate=0.001),
+        optimizer=Adam(learning_rate=0.0003),  # Lower initial learning rate
         loss='binary_crossentropy',
         metrics=['accuracy']
     )
     
     return model
+
+# Add data augmentation function
+def augment_data(X, y):
+    """
+    Apply simple data augmentation techniques to increase training data
+    """
+    X_augmented = []
+    y_augmented = []
+    
+    for i in range(len(X)):
+        # Original data
+        X_augmented.append(X[i])
+        y_augmented.append(y[i])
+        
+        # Add random noise
+        noise_level = 0.05
+        noise = np.random.normal(0, noise_level, X[i].shape)
+        X_augmented.append(X[i] + noise)
+        y_augmented.append(y[i])
+        
+        # Small time shift (5% of signal length)
+        shift_amount = int(X[i].shape[0] * 0.05)
+        if shift_amount > 0:
+            # Shift right
+            shifted = np.roll(X[i], shift_amount, axis=0)
+            X_augmented.append(shifted)
+            y_augmented.append(y[i])
+            
+            # Shift left
+            shifted = np.roll(X[i], -shift_amount, axis=0)
+            X_augmented.append(shifted)
+            y_augmented.append(y[i])
+    
+    return np.array(X_augmented), np.array(y_augmented)
 
 def create_label_mapping(data_dir):
     label_files = {}
@@ -118,34 +165,6 @@ def create_label_mapping(data_dir):
     
     return label_files
 
-def load_dataset(data_dir, label_files):
-    X = []
-    y = []
-    
-    #files in with_plane folder have features extracted
-    with_plane_dir = os.path.join(data_dir, 'with_plane')
-    if os.path.exists(with_plane_dir):
-        for filepath in glob.glob(os.path.join(with_plane_dir, '*.shr')):
-            filename = os.path.basename(filepath)
-            if filename in label_files:
-                spectral_data = parse_shr_file(filepath)
-                features = extract_features(spectral_data)
-                X.append(features)
-                y.append(label_files[filename])
-    
-    #files in without_plane folder have features extracted
-    without_plane_dir = os.path.join(data_dir, 'without_plane')
-    if os.path.exists(without_plane_dir):
-        for filepath in glob.glob(os.path.join(with_plane_dir, '*.shr')):
-            filename = os.path.basename(filepath)
-            if filename in label_files:
-                spectral_data = parse_shr_file(filepath)
-                features = extract_features(spectral_data)
-                X.append(features)
-                y.append(label_files[filename])
-    
-    return np.array(X), np.array(y)
-
 def load_dataset_cnn(data_dir, label_files):
     """
     Load dataset and prepare it for CNN training
@@ -160,28 +179,27 @@ def load_dataset_cnn(data_dir, label_files):
         for filepath in glob.glob(os.path.join(with_plane_dir, '*.shr')):
             filename = os.path.basename(filepath)
             if filename in label_files:
-                spectral_data = parse_shr_file(filepath)
-                # Take the first target_length points or pad if necessary
-                if len(spectral_data) > target_length:
-                    spectral_data = spectral_data[:target_length]
-                else:
-                    spectral_data = np.pad(spectral_data, (0, max(0, target_length - len(spectral_data))))
-                X.append(spectral_data)
-                y.append(label_files[filename])
+                sweeps = parse_shr_file(filepath)
+                for sweep_data in sweeps:
+                    # Pad if necessary
+                    if len(sweep_data) < target_length:
+                        sweep_data = np.pad(sweep_data, (0, target_length - len(sweep_data)))
+                    X.append(sweep_data)
+                    y.append(label_files[filename])
     
     # Process files in without_plane folder
     without_plane_dir = os.path.join(data_dir, 'without_plane')
     if os.path.exists(without_plane_dir):
-        for filepath in glob.glob(os.path.join(with_plane_dir, '*.shr')):
+        for filepath in glob.glob(os.path.join(without_plane_dir, '*.shr')):
             filename = os.path.basename(filepath)
             if filename in label_files:
-                spectral_data = parse_shr_file(filepath)
-                if len(spectral_data) > target_length:
-                    spectral_data = spectral_data[:target_length]
-                else:
-                    spectral_data = np.pad(spectral_data, (0, max(0, target_length - len(spectral_data))))
-                X.append(spectral_data)
-                y.append(label_files[filename])
+                sweeps = parse_shr_file(filepath)
+                for sweep_data in sweeps:
+                    # Pad if necessary
+                    if len(sweep_data) < target_length:
+                        sweep_data = np.pad(sweep_data, (0, target_length - len(sweep_data)))
+                    X.append(sweep_data)
+                    y.append(label_files[filename])
     
     # Convert to numpy arrays and reshape for CNN
     X = np.array(X).reshape(-1, target_length, 1)
@@ -189,57 +207,43 @@ def load_dataset_cnn(data_dir, label_files):
     
     return X, y
 
-def train_model(X, y):
-    #split the dataset into training and testing sets. should probably set a better split or get rid of this entirely.
-    #just useful for quick testing
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2
-    )
-    
-    #use randomforst, gradient boosting, and svm
-    #rf = RandomForestClassifier(n_estimators=100, random_state=42)
-    gb = GradientBoostingClassifier(n_estimators=100)
-    svm = SVC(kernel='rbf', probability=True)
-
-    #use a voting classifier with soft voting
-    model = Pipeline([
-        ('scaler', StandardScaler()),
-        ('classifier', VotingClassifier(
-            #estimators=[('rf', rf), ('gb', gb), ('svm', svm)],
-            estimators=[('gb', gb), ('svm', svm)],
-            voting='soft'
-        ))
-    ])
-    
-    #fit the model to the training data
-    model.fit(X_train, y_train)
-    
-    #print the accuracy and classification report
-    y_pred = model.predict(X_test)
-    print("Accuracy:", accuracy_score(y_test, y_pred))
-    print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
-    print("\nConfusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
-    
-    return model, X_test, y_test
-
 def train_cnn_model(X, y):
     """
     Train a CNN model with the prepared dataset
     """
     # Split the dataset into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
+        X, y, test_size=0.2, random_state=42, stratify=y  # Added stratification
     )
+    
+    # Apply data augmentation (only to training data)
+    X_train, y_train = augment_data(X_train, y_train)
     
     # Create the CNN model
     model = create_cnn_model(input_shape=(X_train.shape[1], 1))
     
     # Define callbacks for training
     callbacks = [
-        EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
-        ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, min_lr=0.00001)
+        # More patience to avoid stopping too early
+        EarlyStopping(
+            monitor='val_loss', 
+            patience=15,  # Increased from 10
+            restore_best_weights=True,
+            min_delta=0.001  # Minimum change to count as improvement
+        ),
+        # More gradual learning rate reduction
+        ReduceLROnPlateau(
+            monitor='val_loss', 
+            factor=0.2,  # More aggressive reduction (was 0.5)
+            patience=3,   # Reduced from 5
+            min_lr=0.000001,
+            verbose=1
+        ),
+        # Add TensorBoard callback for better monitoring
+        tf.keras.callbacks.TensorBoard(
+            log_dir='./logs',
+            histogram_freq=1
+        )
     ]
     
     # Train the model
@@ -247,10 +251,14 @@ def train_cnn_model(X, y):
     history = model.fit(
         X_train, y_train,
         validation_data=(X_test, y_test),
-        epochs=50,
-        batch_size=32,
+        epochs=100,  # Increased from 50
+        batch_size=16,  # Reduced from 32 for better gradient updates
         callbacks=callbacks,
-        verbose=1
+        verbose=1,
+        class_weight={  # Handle class imbalance if present
+            0: 1.0,
+            1: 1.0  # Adjust these weights based on class distribution
+        }
     )
     
     # Evaluate the model
@@ -294,8 +302,12 @@ def save_model(model, output_path):
         os.makedirs(output_dir)
         print(f"Created directory: {output_dir}")
     
-    # For Keras model, use the built-in save method
-    model.save(output_path)
+    # Ensure the file has the .keras extension
+    if not output_path.endswith('.keras'):
+        output_path = f"{output_path}.keras"
+    
+    # Save using the TensorFlow 2.x method with .keras format
+    model.save(output_path, save_format='keras')
     print(f"CNN model saved to {output_path}")
 
 def main():
