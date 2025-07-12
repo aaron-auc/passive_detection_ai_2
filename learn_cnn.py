@@ -251,7 +251,7 @@ def train_cnn_model(X, y):
     history = model.fit(
         X_train, y_train,
         validation_data=(X_test, y_test),
-        epochs=100,  # Increased from 50
+        epochs=50,
         batch_size=16,  # Reduced from 32 for better gradient updates
         callbacks=callbacks,
         verbose=1,

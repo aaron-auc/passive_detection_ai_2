@@ -41,27 +41,12 @@ def preprocess_for_prediction(sweep_data, target_length=19200):
     else:
         data = np.pad(sweep_data, (0, max(0, target_length - len(sweep_data))))
     
-    # Try different normalization approaches
-    # Original normalization
-    mean_val = np.mean(data)
-    std_val = np.std(data) + 1e-10
-    data_norm1 = (data - mean_val) / std_val
+    # Only use raw data (method 5) without normalization
+    print(f"Raw data stats: min={np.min(data):.4f}, max={np.max(data):.4f}, mean={np.mean(data):.4f}")
     
-    # Alternative normalization: Min-Max scaling
-    min_val = np.min(data)
-    max_val = np.max(data)
-    data_norm2 = (data - min_val) / (max_val - min_val + 1e-10)
-    
-    # Debug information
-    print(f"Mean-Std norm stats: min={np.min(data_norm1):.4f}, max={np.max(data_norm1):.4f}, mean={np.mean(data_norm1):.4f}")
-    print(f"Min-Max norm stats: min={np.min(data_norm2):.4f}, max={np.max(data_norm2):.4f}, mean={np.mean(data_norm2):.4f}")
-    
-    # Create a batch of differently normalized data to try multiple approaches
+    # Return only the raw data as a batch of one
     batch = np.stack([
-        data_norm1.reshape(target_length, 1),           # Standard normalization
-        data_norm2.reshape(target_length, 1),           # Min-max normalization
-        data.reshape(target_length, 1),                 # Raw data (no normalization)
-        np.abs(data).reshape(target_length, 1)          # Absolute values
+        data.reshape(target_length, 1)  # Raw data (no normalization)
     ])
     
     return batch
@@ -107,7 +92,17 @@ def load_keras_model(model_path):
             print(f"Alternative loading failed: {e2}")
             return None
 
-def predict_file(model, file_path, threshold=0.5):
+def calibrate_confidence(raw_prediction, calibration_factor=0.3):
+    """
+    Apply a calibration to overconfident predictions to make them more realistic
+    A simple approach to soften extreme probabilities
+    """
+    # Apply softening to extreme probabilities
+    # This pushes very confident predictions away from the extremes (0 or 1)
+    calibrated = raw_prediction * (1 - calibration_factor) + 0.5 * calibration_factor
+    return calibrated
+
+def predict_file(model, file_path, threshold=0.5, calibrate=True):
     """
     Predict if a file contains a plane with multiple approaches
     """
@@ -127,39 +122,45 @@ def predict_file(model, file_path, threshold=0.5):
     
     # Process each sweep and make predictions
     all_predictions = []
+    all_raw_predictions = []  # Store raw predictions for analysis
     processed_sweeps = []
     
+    # Process all sweeps instead of just the first few
     for i, sweep_data in enumerate(sweeps):
         print(f"Processing sweep {i+1}/{len(sweeps)}...")
         
-        # Try with different data preprocessing approaches
+        # Get raw data only
         batch = preprocess_for_prediction(sweep_data)
         
-        # Store first preprocessing approach for visualization
-        processed_sweeps.append(batch[0].reshape(1, 19200, 1))
+        # Store for visualization - only store the first few for memory efficiency
+        if i < 10:  # Store first 10 processed sweeps for visualization
+            processed_sweeps.append(batch[0].reshape(1, 19200, 1))
         
-        # Try different normalization methods
-        method_predictions = []
-        for j in range(batch.shape[0]):
-            # Make prediction with current normalization method
-            input_data = batch[j:j+1]
-            raw_prediction = model.predict(input_data, verbose=0)
-            
-            # Extract the prediction value
-            if isinstance(raw_prediction, list):
-                pred_val = raw_prediction[0][0]
-            else:
-                pred_val = raw_prediction[0][0]
-                
-            method_predictions.append(pred_val)
-            print(f"  Method {j+1} prediction: {pred_val:.6f}")
+        # Use only the raw data (method 5)
+        input_data = batch[0:1]
+        raw_prediction = model.predict(input_data, verbose=0)
         
-        # Choose highest confidence prediction from different methods
-        best_prediction = max(method_predictions)
-        all_predictions.append(best_prediction)
-        print(f"Sweep {i+1} best prediction: {best_prediction:.6f}")
+        # Extract the prediction value
+        if isinstance(raw_prediction, list):
+            pred_val = raw_prediction[0][0]
+        else:
+            pred_val = raw_prediction[0][0]
         
-        # Try to extract intermediate activations to diagnose model
+        # Store the raw prediction for debugging
+        method_raw_predictions = [pred_val]
+        
+        # Apply calibration if enabled
+        if calibrate and (pred_val > 0.95 or pred_val < 0.05):
+            calibrated_val = calibrate_confidence(pred_val)
+            print(f"  Raw prediction: {pred_val:.6f} (calibrated to {calibrated_val:.6f})")
+            pred_val = calibrated_val
+        else:
+            print(f"  Raw prediction: {pred_val:.6f}")
+        
+        all_predictions.append(pred_val)
+        all_raw_predictions.append(method_raw_predictions)
+        
+        # Try to extract intermediate activations to diagnose model - only for the first sweep
         if i == 0:
             try:
                 print("\nDiagnosing model layer activations...")
@@ -178,22 +179,42 @@ def predict_file(model, file_path, threshold=0.5):
                     print(f"Layer {layer_name}: min={act_min:.4f}, max={act_max:.4f}, mean={act_mean:.4f}, zeros={act_zeros:.1f}%")
             except Exception as e:
                 print(f"Could not extract activations: {e}")
-        
-        # Only process first few sweeps during debugging
-        if i >= 2:  # Process just 3 sweeps for debugging
-            break
     
     # Calculate average prediction and determine if a plane is present
+    # Use a more conservative approach - require multiple sweeps to agree
     avg_prediction = np.mean(all_predictions)
-    has_plane = avg_prediction > threshold
+    consistency = np.std(all_predictions)  # Check how consistent predictions are
+    
+    # Adjust confidence based on consistency
+    confidence_factor = 1.0 - min(1.0, consistency * 2)  # Lower confidence when predictions vary a lot
+    
+    # Add additional safeguards against overconfidence
+    # If all predictions are extremely high (> 0.9) or low (< 0.1), this might indicate a calibration issue
+    if np.all(np.array(all_predictions) > 0.9) or np.all(np.array(all_predictions) < 0.1):
+        print("WARNING: All predictions are extreme values. This might indicate a calibration issue.")
+        # Further adjust confidence when all predictions are extreme
+        confidence_factor *= 0.7
+    
+    adjusted_avg = avg_prediction * confidence_factor + 0.5 * (1 - confidence_factor)
+    
+    print(f"Raw average: {avg_prediction:.4f}, Consistency: {consistency:.4f}")
+    print(f"Confidence factor: {confidence_factor:.4f}, Adjusted average: {adjusted_avg:.4f}")
+    print(f"Total sweeps analyzed: {len(all_predictions)}")
+    
+    # Use adjusted average for final decision
+    has_plane = adjusted_avg > threshold
     
     return {
         'predictions': all_predictions,
+        'raw_predictions': all_raw_predictions,
         'average': avg_prediction,
+        'adjusted_average': adjusted_avg,
+        'consistency': consistency,
+        'confidence_factor': confidence_factor,
         'has_plane': has_plane,
         'sweeps': len(all_predictions),
         'processed_data': processed_sweeps,
-        'raw_sweeps': sweeps[:len(all_predictions)]
+        'raw_sweeps': sweeps[:min(len(all_predictions), 10)]  # Only store first 10 raw sweeps for memory efficiency
     }
 
 def visualize_prediction(result, file_path, output_dir=None):
@@ -214,12 +235,33 @@ def visualize_prediction(result, file_path, output_dir=None):
     plt.xlabel("Sample Index")
     plt.ylabel("Amplitude")
     
-    # Plot prediction for each sweep
+    # Plot prediction for each sweep - may need to limit display for large sweep counts
     plt.subplot(2, 1, 2)
-    sweep_indices = np.arange(1, len(result['predictions']) + 1)
-    plt.bar(sweep_indices, result['predictions'], color=['red' if p > 0.5 else 'blue' for p in result['predictions']])
-    plt.axhline(y=0.5, color='black', linestyle='--', alpha=0.7)
-    plt.title(f"Prediction by Sweep (Avg: {result['average']:.4f}, Plane: {'Yes' if result['has_plane'] else 'No'})")
+    
+    # For readability, if there are many sweeps, display a summary rather than individual bars
+    if len(result['predictions']) > 50:
+        # Plot a rolling average
+        window_size = max(5, len(result['predictions']) // 20)  # Adaptive window size
+        rolling_avg = np.convolve(result['predictions'], np.ones(window_size)/window_size, mode='valid')
+        x_vals = np.arange(window_size//2, len(result['predictions']) - window_size//2)
+        plt.plot(x_vals, rolling_avg, 'r-', linewidth=2)
+        plt.axhline(y=0.5, color='black', linestyle='--', alpha=0.7)
+        
+        # Add sample points
+        sample_size = min(50, len(result['predictions']))
+        sample_indices = np.linspace(0, len(result['predictions'])-1, sample_size, dtype=int)
+        plt.scatter(sample_indices, [result['predictions'][i] for i in sample_indices], 
+                   c=['red' if p > 0.5 else 'blue' for p in [result['predictions'][i] for i in sample_indices]],
+                   alpha=0.5)
+        
+        plt.title(f"Prediction by Sweep (Total: {len(result['predictions'])} sweeps, Avg: {result['average']:.4f})")
+    else:
+        # If fewer sweeps, show individual bars as before
+        sweep_indices = np.arange(1, len(result['predictions']) + 1)
+        plt.bar(sweep_indices, result['predictions'], color=['red' if p > 0.5 else 'blue' for p in result['predictions']])
+        plt.axhline(y=0.5, color='black', linestyle='--', alpha=0.7)
+        plt.title(f"Prediction by Sweep (Avg: {result['average']:.4f}, Adj: {result['adjusted_average']:.4f})")
+    
     plt.xlabel("Sweep Number")
     plt.ylabel("Prediction (1 = Plane, 0 = No Plane)")
     plt.ylim(0, 1)
@@ -227,8 +269,8 @@ def visualize_prediction(result, file_path, output_dir=None):
     # Add text with results
     plt.figtext(0.5, 0.01, 
                 f"File: {os.path.basename(file_path)}\n" +
-                f"Average prediction: {result['average']:.4f}\n" +
-                f"Decision: {'PLANE DETECTED' if result['has_plane'] else 'NO PLANE DETECTED'}",
+                f"Sweeps analyzed: {result['sweeps']}, Raw average: {result['average']:.4f}, Adjusted avg: {result['adjusted_average']:.4f}\n" +
+                f"Decision: {'PLANE DETECTED' if result['has_plane'] else 'NO PLANE DETECTED'} (Confidence: {result['confidence_factor']:.2f})",
                 ha='center', fontsize=12, bbox={'facecolor':'yellow', 'alpha':0.5})
     
     plt.tight_layout(rect=[0, 0.05, 1, 0.95])
@@ -252,6 +294,7 @@ def main():
     parser.add_argument('--visualize', action='store_true', help='Visualize the prediction results.')
     parser.add_argument('--output_dir', type=str, help='Directory to save visualization results.')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode with extra logging.')
+    parser.add_argument('--no_calibration', action='store_true', help='Disable prediction calibration.')
     args = parser.parse_args()
     
     # Enable debug information in TensorFlow if requested
@@ -269,27 +312,28 @@ def main():
     print("\nTesting model with sample data...")
     
     # Create test data with varying patterns to test model responsiveness
-    test_batch = np.zeros((4, 19200, 1))
-    # Random noise
+    test_batch = np.zeros((1, 19200, 1))
+    # Only use raw data test (equivalent to method 5)
     test_batch[0, :, 0] = np.random.normal(0, 1, 19200)
-    # Sine wave pattern
-    test_batch[1, :, 0] = np.sin(np.linspace(0, 10*np.pi, 19200)) * 0.5
-    # Pulse pattern
-    test_batch[2, :, 0] = np.zeros(19200)
-    test_batch[2, 9000:9200, 0] = 1.0
-    # Mixed pattern
-    test_batch[3, :, 0] = np.random.normal(0, 0.2, 19200) + np.sin(np.linspace(0, 6*np.pi, 19200)) * 0.5
     
-    for i, test_data in enumerate(test_batch):
-        pattern_name = ["Random noise", "Sine wave", "Pulse", "Mixed pattern"][i]
-        print(f"\nTesting with {pattern_name}...")
-        test_prediction = model.predict(test_data.reshape(1, 19200, 1), verbose=0)
-        print(f"Test prediction: {test_prediction}")
+    # Apply calibration to test predictions
+    calibrate = not args.no_calibration
+    print(f"Prediction calibration: {'Disabled' if args.no_calibration else 'Enabled'}")
+    
+    print("\nTesting with random noise...")
+    test_prediction = model.predict(test_batch, verbose=0)
+    raw_pred_val = test_prediction[0][0] if isinstance(test_prediction, np.ndarray) else test_prediction[0]
+    
+    if calibrate:
+        calibrated_pred = calibrate_confidence(raw_pred_val)
+        print(f"Test prediction: {raw_pred_val} (calibrated to {calibrated_pred})")
+    else:
+        print(f"Test prediction: {raw_pred_val}")
     
     # Make prediction on actual file
     print("\nProcessing actual file...")
     start_time = time.time()
-    result = predict_file(model, args.file, args.threshold)
+    result = predict_file(model, args.file, args.threshold, calibrate=calibrate)
     prediction_time = time.time() - start_time
     
     if result is None:
@@ -300,7 +344,9 @@ def main():
     print("\n" + "="*50)
     print(f"File: {os.path.basename(args.file)}")
     print(f"Sweeps analyzed: {result['sweeps']}")
-    print(f"Average prediction: {result['average']:.4f}")
+    print(f"Raw average prediction: {result['average']:.4f}")
+    print(f"Adjusted prediction: {result['adjusted_average']:.4f}")
+    print(f"Prediction consistency: {result['consistency']:.4f}")
     print(f"Decision: {'PLANE DETECTED' if result['has_plane'] else 'NO PLANE DETECTED'}")
     print(f"Processing time: {prediction_time:.2f} seconds")
     print("="*50)

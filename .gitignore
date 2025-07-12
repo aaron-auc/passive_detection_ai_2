@@ -2,6 +2,7 @@
 /recordings/
 /parse_output/
 /model/
+/logs/
 /environment/
 debug_features.py
 debug_shr_file.py
