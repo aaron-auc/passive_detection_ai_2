@@ -4,20 +4,20 @@ import subprocess
 import numpy as np
 import os
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+from tensorflow import keras
 from predict_cnn import parse_shr_file, preprocess_for_prediction, calibrate_confidence
 import traceback
 
 HOST = '192.168.0.80'  #signal hound ip
 PORT = 5025  #scpi port
 
-RECORDING_DURATION = 10  # seconds
+RECORDING_DURATION = 3  # seconds
 
 #function to load the CNN model
 def load_cnn_model(model_path):
     try:
         # Try standard loading first
-        model = load_model(model_path)
+        model = keras.models.load_model(model_path)
         print(f"CNN model loaded successfully from {model_path}")
         model.summary()
         return model
@@ -27,7 +27,7 @@ def load_cnn_model(model_path):
         try:
             print("Attempting alternative model loading approach...")
             # Load with compile=False to avoid optimization issues
-            model = load_model(model_path, compile=False)
+            model = keras.models.load_model(model_path, compile=False)
             model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
             print("Alternative loading successful")
             return model
@@ -109,7 +109,7 @@ try:
         s.sendall(b'SENS:FREQ:CENT:STEP 1e4\n')
         
         s.sendall(b'INIT:CONT ON\n')
-        output_directory = './recordings/' # Adjust this as needed
+        output_directory = 'C:\\Users\\Kai\\repos\\passive_detection_ai\\recordings\\' # Adjust this as needed
         save_command = f'REC:SWEEP:FILE:DIR {output_directory}\n'.encode('utf-8')
         s.sendall(save_command)
         

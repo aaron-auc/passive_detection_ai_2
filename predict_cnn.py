@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 import os
 import argparse
 import tensorflow as tf
-from tensorflow.keras.models import load_model
+from tensorflow import keras
+#from tensorflow.keras.models import load_model
 import time
 
 # Reuse the SHR file parser from learn_cnn.py
@@ -57,7 +58,7 @@ def load_keras_model(model_path):
     """
     try:
         # Try standard loading first
-        model = load_model(model_path)
+        model = keras.models.load_model(model_path)
         print(f"Model loaded successfully from {model_path}")
         model.summary()
         
@@ -84,7 +85,7 @@ def load_keras_model(model_path):
         try:
             print("Attempting alternative model loading approach...")
             # Load with compile=False to avoid optimization issues
-            model = load_model(model_path, compile=False)
+            model = keras.models.load_model(model_path, compile=False)
             model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
             print("Alternative loading successful")
             return model
