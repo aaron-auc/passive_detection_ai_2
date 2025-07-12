@@ -28,22 +28,22 @@ def parse_shr_file(file_path):
         #process to skip 12 values after every 38,402 values (one sweep)
         sweeps = []
         i = 0
-        half_sweep_size = 19201  # Only use first half of the sweep (38402 / 2)
+        sweep_size = 38402  # Use the full sweep size
         
-        while i + half_sweep_size <= len(trace_data):
-            # Extract first half of current sweep
-            sweep_data = trace_data[i:i+half_sweep_size]
+        while i + sweep_size <= len(trace_data):
+            # Extract current sweep
+            sweep_data = trace_data[i:i+sweep_size]
             
             # Skip any sweeps that seem incomplete
-            if len(sweep_data) == half_sweep_size:
-                sweeps.append(sweep_data[:19200])  # Store as separate sweep, trim to target length
+            if len(sweep_data) == sweep_size:
+                sweeps.append(sweep_data[:38400])  # Store as separate sweep, trim to target length (38400 for easy pooling)
             
             # Move to next sweep
-            i = i + 38402 + 12  # Skip full sweep + header for next sweep
+            i = i + sweep_size + 12  # Skip full sweep + header for next sweep
         
         return sweeps  # Return a list of individual sweeps
 
-def preprocess_for_cnn(spectral_data, target_length=19200):
+def preprocess_for_cnn(spectral_data, target_length=38400):
     """
     Preprocess the spectral data for CNN input by reshaping and normalizing
     """
@@ -63,39 +63,39 @@ def preprocess_for_cnn(spectral_data, target_length=19200):
     
     return data
 
-def create_cnn_model(input_shape=(19200, 1)):
+def create_cnn_model(input_shape=(38400, 1)):
     """
     Create a CNN model for spectral data classification
     """
     model = Sequential([
         # First convolutional layer
-        Conv1D(filters=32, kernel_size=64, activation='relu', input_shape=input_shape),
+        Conv1D(filters=32, kernel_size=128, activation='relu', input_shape=input_shape),
         BatchNormalization(),
-        MaxPooling1D(pool_size=4),
+        MaxPooling1D(pool_size=8),
         
         # Second convolutional layer
-        Conv1D(filters=64, kernel_size=32, activation='relu'),
+        Conv1D(filters=64, kernel_size=64, activation='relu'),
         BatchNormalization(),
-        MaxPooling1D(pool_size=4),
+        MaxPooling1D(pool_size=8),
         
         # Third convolutional layer
-        Conv1D(filters=128, kernel_size=16, activation='relu'),
+        Conv1D(filters=128, kernel_size=32, activation='relu'),
         BatchNormalization(),
-        MaxPooling1D(pool_size=2),
+        MaxPooling1D(pool_size=4),
         Dropout(0.4),
         
-        # Fourth convolutional layer (added)
-        Conv1D(filters=256, kernel_size=8, activation='relu'),
+        # Fourth convolutional layer
+        Conv1D(filters=256, kernel_size=16, activation='relu'),
         BatchNormalization(),
-        MaxPooling1D(pool_size=2),
+        MaxPooling1D(pool_size=4),
         Dropout(0.4),
         
         # Flatten and dense layers
         Flatten(),
-        Dense(256, activation='relu'),  # Increased from 128 to 256
+        Dense(256, activation='relu'),
         BatchNormalization(),
         Dropout(0.5),
-        Dense(64, activation='relu'),   # Added intermediate layer
+        Dense(64, activation='relu'),
         BatchNormalization(),
         Dropout(0.3),
         Dense(1, activation='sigmoid')  # Binary classification
@@ -103,7 +103,7 @@ def create_cnn_model(input_shape=(19200, 1)):
     
     # Compile the model
     model.compile(
-        optimizer=Adam(learning_rate=0.0003),  # Lower initial learning rate
+        optimizer=Adam(learning_rate=0.0003),
         loss='binary_crossentropy',
         metrics=['accuracy']
     )
@@ -168,41 +168,73 @@ def create_label_mapping(data_dir):
 def load_dataset_cnn(data_dir, label_files):
     """
     Load dataset and prepare it for CNN training
+    Memory-optimized version
     """
     X = []
     y = []
-    target_length = 19200  # Target length for all samples
+    target_length = 38400  # Updated target length for all samples
+    
+    # Process files in batch to reduce memory consumption
+    def process_directory(directory, label):
+        batch_size = 20  # Process files in smaller batches
+        all_files = glob.glob(os.path.join(directory, '*.shr'))
+        
+        for i in range(0, len(all_files), batch_size):
+            batch_files = all_files[i:i+batch_size]
+            batch_X = []
+            batch_y = []
+            
+            for filepath in batch_files:
+                filename = os.path.basename(filepath)
+                if filename in label_files:
+                    sweeps = parse_shr_file(filepath)
+                    for sweep_data in sweeps:
+                        # Pad if necessary
+                        if len(sweep_data) < target_length:
+                            sweep_data = np.pad(sweep_data, (0, target_length - len(sweep_data)))
+                        elif len(sweep_data) > target_length:
+                            sweep_data = sweep_data[:target_length]
+                        
+                        # Normalize data early to save memory
+                        sweep_data = (sweep_data - np.mean(sweep_data)) / (np.std(sweep_data) + 1e-10)
+                        batch_X.append(sweep_data)
+                        batch_y.append(label)
+            
+            # Convert batch to numpy array and append
+            if batch_X:
+                X.extend(batch_X)
+                y.extend(batch_y)
+                # Clear batch data to free memory
+                batch_X = None
+                batch_y = None
+                import gc
+                gc.collect()  # Force garbage collection
     
     # Process files in with_plane folder
     with_plane_dir = os.path.join(data_dir, 'with_plane')
     if os.path.exists(with_plane_dir):
-        for filepath in glob.glob(os.path.join(with_plane_dir, '*.shr')):
-            filename = os.path.basename(filepath)
-            if filename in label_files:
-                sweeps = parse_shr_file(filepath)
-                for sweep_data in sweeps:
-                    # Pad if necessary
-                    if len(sweep_data) < target_length:
-                        sweep_data = np.pad(sweep_data, (0, target_length - len(sweep_data)))
-                    X.append(sweep_data)
-                    y.append(label_files[filename])
+        process_directory(with_plane_dir, 1)
     
     # Process files in without_plane folder
     without_plane_dir = os.path.join(data_dir, 'without_plane')
     if os.path.exists(without_plane_dir):
-        for filepath in glob.glob(os.path.join(without_plane_dir, '*.shr')):
-            filename = os.path.basename(filepath)
-            if filename in label_files:
-                sweeps = parse_shr_file(filepath)
-                for sweep_data in sweeps:
-                    # Pad if necessary
-                    if len(sweep_data) < target_length:
-                        sweep_data = np.pad(sweep_data, (0, target_length - len(sweep_data)))
-                    X.append(sweep_data)
-                    y.append(label_files[filename])
+        process_directory(without_plane_dir, 0)
     
-    # Convert to numpy arrays and reshape for CNN
-    X = np.array(X).reshape(-1, target_length, 1)
+    # Convert to numpy arrays and reshape for CNN - do this in batches
+    print(f"Total samples: {len(X)}")
+    batch_size = 100
+    final_X = []
+    
+    for i in range(0, len(X), batch_size):
+        batch = X[i:i+batch_size]
+        batch_array = np.array(batch).reshape(-1, target_length, 1)
+        final_X.append(batch_array)
+        # Clear memory
+        batch = None
+        import gc
+        gc.collect()
+    
+    X = np.vstack(final_X)
     y = np.array(y)
     
     return X, y
@@ -210,60 +242,104 @@ def load_dataset_cnn(data_dir, label_files):
 def train_cnn_model(X, y):
     """
     Train a CNN model with the prepared dataset
+    Memory-optimized version
     """
+    # Use lower precision to reduce memory usage
+    X = X.astype(np.float32)  # Use float32 instead of float64
+    
     # Split the dataset into training and testing sets
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y  # Added stratification
+        X, y, test_size=0.2, random_state=42, stratify=y
     )
     
-    # Apply data augmentation (only to training data)
-    X_train, y_train = augment_data(X_train, y_train)
+    # Clear the original X data to free memory
+    X = None
+    import gc
+    gc.collect()
     
-    # Create the CNN model
+    # Apply data augmentation in batches
+    def batch_augment(X_batch, y_batch, batch_size=50):
+        X_aug = []
+        y_aug = []
+        
+        for i in range(0, len(X_batch), batch_size):
+            end = min(i + batch_size, len(X_batch))
+            X_batch_aug, y_batch_aug = augment_data(X_batch[i:end], y_batch[i:end])
+            X_aug.append(X_batch_aug)
+            y_aug.extend(y_batch_aug)
+            # Free memory
+            X_batch_aug = None
+            gc.collect()
+        
+        return np.vstack(X_aug), np.array(y_aug)
+    
+    print("Augmenting training data...")
+    X_train, y_train = batch_augment(X_train, y_train)
+    
+    # Create a more memory-efficient model
     model = create_cnn_model(input_shape=(X_train.shape[1], 1))
     
-    # Define callbacks for training
+    # Use a generator to feed data in batches during training
+    def data_generator(X_data, y_data, batch_size=8):
+        num_samples = len(X_data)
+        while True:
+            indices = np.random.permutation(num_samples)
+            for i in range(0, num_samples, batch_size):
+                batch_indices = indices[i:i + batch_size]
+                yield X_data[batch_indices], y_data[batch_indices]
+    
+    # Define callbacks for training with memory optimization
     callbacks = [
-        # More patience to avoid stopping too early
         EarlyStopping(
             monitor='val_loss', 
-            patience=15,  # Increased from 10
+            patience=10,
             restore_best_weights=True,
-            min_delta=0.001  # Minimum change to count as improvement
+            min_delta=0.001
         ),
-        # More gradual learning rate reduction
         ReduceLROnPlateau(
             monitor='val_loss', 
-            factor=0.2,  # More aggressive reduction (was 0.5)
-            patience=3,   # Reduced from 5
+            factor=0.2,
+            patience=3,
             min_lr=0.000001,
             verbose=1
         ),
-        # Add TensorBoard callback for better monitoring
-        tf.keras.callbacks.TensorBoard(
-            log_dir='./logs',
-            histogram_freq=1
+        # Add ModelCheckpoint to save best model instead of keeping in memory
+        tf.keras.callbacks.ModelCheckpoint(
+            filepath='./temp_best_model.keras',
+            save_best_only=True,
+            monitor='val_loss',
+            verbose=1
         )
     ]
     
-    # Train the model
-    print("Training CNN model...")
+    # Calculate steps per epoch based on batch size
+    train_batch_size = 8  # Smaller batch size to reduce memory usage
+    steps_per_epoch = len(X_train) // train_batch_size
+    validation_steps = len(X_test) // train_batch_size
+    
+    # Train the model using a generator - removed problematic parameters
+    print("Training CNN model with generators...")
     history = model.fit(
-        X_train, y_train,
-        validation_data=(X_test, y_test),
-        epochs=50,
-        batch_size=16,  # Reduced from 32 for better gradient updates
+        data_generator(X_train, y_train, train_batch_size),
+        steps_per_epoch=steps_per_epoch,
+        validation_data=data_generator(X_test, y_test, train_batch_size),
+        validation_steps=validation_steps,
+        epochs=30,  # Reduced number of epochs
         callbacks=callbacks,
-        verbose=1,
-        class_weight={  # Handle class imbalance if present
-            0: 1.0,
-            1: 1.0  # Adjust these weights based on class distribution
-        }
+        verbose=1
+        # Removed use_multiprocessing and workers parameters
     )
     
-    # Evaluate the model
-    y_pred_prob = model.predict(X_test)
-    y_pred = (y_pred_prob > 0.5).astype(int)
+    # Evaluate the model in batches
+    test_batch_size = 8
+    y_pred_prob = []
+    
+    for i in range(0, len(X_test), test_batch_size):
+        batch_X = X_test[i:i+test_batch_size]
+        batch_pred = model.predict(batch_X)
+        y_pred_prob.extend(batch_pred.flatten())
+    
+    y_pred = (np.array(y_pred_prob) > 0.5).astype(int)
     
     print("Accuracy:", accuracy_score(y_test, y_pred))
     print("\nClassification Report:")

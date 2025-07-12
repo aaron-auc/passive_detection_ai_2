@@ -16,22 +16,22 @@ def parse_shr_file(file_path):
         #process to skip 12 values after every 38,402 values (one sweep)
         sweeps = []
         i = 0
-        half_sweep_size = 19201  # Only use first half of the sweep (38402 / 2)
+        full_sweep_size = 38402  # Use full sweep size
         
-        while i + half_sweep_size <= len(trace_data):
-            # Extract first half of current sweep
-            sweep_data = trace_data[i:i+half_sweep_size]
+        while i + full_sweep_size <= len(trace_data):
+            # Extract full sweep
+            sweep_data = trace_data[i:i+full_sweep_size]
             
             # Skip any sweeps that seem incomplete
-            if len(sweep_data) == half_sweep_size:
-                sweeps.append(sweep_data[:19200])  # Store as separate sweep, trim to target length
+            if len(sweep_data) == full_sweep_size:
+                sweeps.append(sweep_data[:38400])  # Store as separate sweep, trim to target length
             
             # Move to next sweep
-            i = i + 38402 + 12  # Skip full sweep + header for next sweep
+            i = i + full_sweep_size + 12  # Skip full sweep + header for next sweep
         
         return sweeps  # Return a list of individual sweeps
 
-def preprocess_for_prediction(sweep_data, target_length=19200):
+def preprocess_for_prediction(sweep_data, target_length=38400):
     """
     Preprocess a single sweep for prediction with multiple normalization options
     """
@@ -41,15 +41,15 @@ def preprocess_for_prediction(sweep_data, target_length=19200):
     else:
         data = np.pad(sweep_data, (0, max(0, target_length - len(sweep_data))))
     
-    # Only use raw data (method 5) without normalization
+    # Print raw data stats for debugging
     print(f"Raw data stats: min={np.min(data):.4f}, max={np.max(data):.4f}, mean={np.mean(data):.4f}")
     
-    # Return only the raw data as a batch of one
-    batch = np.stack([
-        data.reshape(target_length, 1)  # Raw data (no normalization)
-    ])
+    # Apply the same normalization used during training
+    normalized_data = (data - np.mean(data)) / (np.std(data) + 1e-10)
+    print(f"Normalized data stats: min={np.min(normalized_data):.4f}, max={np.max(normalized_data):.4f}, mean={np.mean(normalized_data):.4f}")
     
-    return batch
+    # Return normalized data reshaped for model input
+    return np.stack([normalized_data.reshape(target_length, 1)])
 
 def load_keras_model(model_path):
     """
@@ -129,16 +129,15 @@ def predict_file(model, file_path, threshold=0.5, calibrate=True):
     for i, sweep_data in enumerate(sweeps):
         print(f"Processing sweep {i+1}/{len(sweeps)}...")
         
-        # Get raw data only
+        # Preprocess data with proper normalization matching training
         batch = preprocess_for_prediction(sweep_data)
         
         # Store for visualization - only store the first few for memory efficiency
         if i < 10:  # Store first 10 processed sweeps for visualization
-            processed_sweeps.append(batch[0].reshape(1, 19200, 1))
+            processed_sweeps.append(batch[0].reshape(1, 38400, 1))
         
-        # Use only the raw data (method 5)
-        input_data = batch[0:1]
-        raw_prediction = model.predict(input_data, verbose=0)
+        # Make prediction with normalized data
+        raw_prediction = model.predict(batch, verbose=0)
         
         # Extract the prediction value
         if isinstance(raw_prediction, list):
@@ -167,7 +166,7 @@ def predict_file(model, file_path, threshold=0.5, calibrate=True):
                 # Create a model to extract intermediate layer outputs
                 layer_outputs = [layer.output for layer in model.layers if 'conv' in layer.name.lower() or 'dense' in layer.name.lower()]
                 activation_model = tf.keras.Model(inputs=model.input, outputs=layer_outputs)
-                activations = activation_model.predict(processed_sweeps[0])
+                activations = activation_model.predict(batch)
                 
                 # Print activation statistics for each layer
                 for j, activation in enumerate(activations):
@@ -240,14 +239,21 @@ def visualize_prediction(result, file_path, output_dir=None):
     
     # For readability, if there are many sweeps, display a summary rather than individual bars
     if len(result['predictions']) > 50:
-        # Plot a rolling average
+        # Plot a rolling average - fix dimension mismatch issue
         window_size = max(5, len(result['predictions']) // 20)  # Adaptive window size
         rolling_avg = np.convolve(result['predictions'], np.ones(window_size)/window_size, mode='valid')
-        x_vals = np.arange(window_size//2, len(result['predictions']) - window_size//2)
+        
+        # Ensure x_vals and rolling_avg have the same length
+        x_vals = np.arange(len(rolling_avg))
+        
+        # Adjust x_vals to be centered correctly (optional)
+        x_offset = window_size // 2
+        x_vals = x_vals + x_offset
+        
         plt.plot(x_vals, rolling_avg, 'r-', linewidth=2)
         plt.axhline(y=0.5, color='black', linestyle='--', alpha=0.7)
         
-        # Add sample points
+        # Add sample points - ensure we're using existing indices only
         sample_size = min(50, len(result['predictions']))
         sample_indices = np.linspace(0, len(result['predictions'])-1, sample_size, dtype=int)
         plt.scatter(sample_indices, [result['predictions'][i] for i in sample_indices], 
@@ -290,7 +296,7 @@ def main():
     parser = argparse.ArgumentParser(description="Test a file against a trained Keras model.")
     parser.add_argument('--model', type=str, default='./model/plane_detector_cnn', help='Path to the trained Keras model.')
     parser.add_argument('--file', type=str, required=True, help='Path to the .shr file to test.')
-    parser.add_argument('--threshold', type=float, default=0.5, help='Prediction threshold (default: 0.5).')
+    parser.add_argument('--threshold', type=float, default=0.4, help='Prediction threshold (default: 0.5).')
     parser.add_argument('--visualize', action='store_true', help='Visualize the prediction results.')
     parser.add_argument('--output_dir', type=str, help='Directory to save visualization results.')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode with extra logging.')
@@ -312,15 +318,22 @@ def main():
     print("\nTesting model with sample data...")
     
     # Create test data with varying patterns to test model responsiveness
-    test_batch = np.zeros((1, 19200, 1))
-    # Only use raw data test (equivalent to method 5)
-    test_batch[0, :, 0] = np.random.normal(0, 1, 19200)
+    test_batch = np.zeros((1, 38400, 1))
+    # Create test data with noise and normalize it like in training
+    raw_test_data = np.random.normal(0, 1, 38400)
+    test_batch[0, :, 0] = (raw_test_data - np.mean(raw_test_data)) / (np.std(raw_test_data) + 1e-10)
+    
+    print("Test data stats:")
+    print(f"  Min: {np.min(test_batch):.4f}")
+    print(f"  Max: {np.max(test_batch):.4f}")
+    print(f"  Mean: {np.mean(test_batch):.4f}")
+    print(f"  Std: {np.std(test_batch):.4f}")
     
     # Apply calibration to test predictions
     calibrate = not args.no_calibration
     print(f"Prediction calibration: {'Disabled' if args.no_calibration else 'Enabled'}")
     
-    print("\nTesting with random noise...")
+    print("\nTesting with normalized random noise...")
     test_prediction = model.predict(test_batch, verbose=0)
     raw_pred_val = test_prediction[0][0] if isinstance(test_prediction, np.ndarray) else test_prediction[0]
     
@@ -330,15 +343,23 @@ def main():
     else:
         print(f"Test prediction: {raw_pred_val}")
     
+    # Add a second test with an extreme signal to see if the model can respond to it
+    extreme_test = np.zeros((1, 38400, 1))
+    # Create a pattern with higher amplitude and normalize it
+    pattern = np.sin(np.linspace(0, 100*np.pi, 38400)) * 10
+    pattern = (pattern - np.mean(pattern)) / (np.std(pattern) + 1e-10)
+    extreme_test[0, :, 0] = pattern
+    
+    print("\nTesting with normalized extreme pattern...")
+    extreme_prediction = model.predict(extreme_test, verbose=0)
+    extreme_pred_val = extreme_prediction[0][0] if isinstance(extreme_prediction, np.ndarray) else extreme_prediction[0]
+    print(f"Extreme pattern prediction: {extreme_pred_val}")
+    
     # Make prediction on actual file
     print("\nProcessing actual file...")
     start_time = time.time()
     result = predict_file(model, args.file, args.threshold, calibrate=calibrate)
     prediction_time = time.time() - start_time
-    
-    if result is None:
-        print(f"Failed to process file: {args.file}")
-        return
     
     # Print results
     print("\n" + "="*50)
