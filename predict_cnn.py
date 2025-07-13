@@ -32,7 +32,7 @@ def parse_shr_file(file_path):
         
         return sweeps  # Return a list of individual sweeps
 
-def preprocess_for_prediction(sweep_data, target_length=38400):
+def preprocess_for_prediction(sweep_data, target_length=38400, verbose=False):
     """
     Preprocess a single sweep for prediction with multiple normalization options
     """
@@ -42,12 +42,15 @@ def preprocess_for_prediction(sweep_data, target_length=38400):
     else:
         data = np.pad(sweep_data, (0, max(0, target_length - len(sweep_data))))
     
-    # Print raw data stats for debugging
-    print(f"Raw data stats: min={np.min(data):.4f}, max={np.max(data):.4f}, mean={np.mean(data):.4f}")
+    # Print raw data stats for debugging only in verbose mode
+    if verbose:
+        print(f"Raw data stats: min={np.min(data):.4f}, max={np.max(data):.4f}, mean={np.mean(data):.4f}")
     
     # Apply the same normalization used during training
     normalized_data = (data - np.mean(data)) / (np.std(data) + 1e-10)
-    print(f"Normalized data stats: min={np.min(normalized_data):.4f}, max={np.max(normalized_data):.4f}, mean={np.mean(normalized_data):.4f}")
+    
+    if verbose:
+        print(f"Normalized data stats: min={np.min(normalized_data):.4f}, max={np.max(normalized_data):.4f}, mean={np.mean(normalized_data):.4f}")
     
     # Return normalized data reshaped for model input
     return np.stack([normalized_data.reshape(target_length, 1)])
@@ -103,7 +106,7 @@ def calibrate_confidence(raw_prediction, calibration_factor=0.3):
     calibrated = raw_prediction * (1 - calibration_factor) + 0.5 * calibration_factor
     return calibrated
 
-def predict_file(model, file_path, threshold=0.5, calibrate=True):
+def predict_file(model, file_path, threshold=0.5, calibrate=False):
     """
     Predict if a file contains a plane with multiple approaches
     """
@@ -126,12 +129,19 @@ def predict_file(model, file_path, threshold=0.5, calibrate=True):
     all_raw_predictions = []  # Store raw predictions for analysis
     processed_sweeps = []
     
+    # Show progress but not details for every sweep
+    print(f"Processing {len(sweeps)} sweeps...")
+    
     # Process all sweeps instead of just the first few
     for i, sweep_data in enumerate(sweeps):
-        print(f"Processing sweep {i+1}/{len(sweeps)}...")
+        # Only show progress every 10% of sweeps or for the first and last
+        should_show_progress = (i == 0 or i == len(sweeps)-1 or i % max(1, len(sweeps)//10) == 0)
         
-        # Preprocess data with proper normalization matching training
-        batch = preprocess_for_prediction(sweep_data)
+        if should_show_progress:
+            print(f"Processing sweep {i+1}/{len(sweeps)}...")
+        
+        # Preprocess data with proper normalization matching training - verbose only for first sweep
+        batch = preprocess_for_prediction(sweep_data, verbose=(i==0))
         
         # Store for visualization - only store the first few for memory efficiency
         if i < 10:  # Store first 10 processed sweeps for visualization
@@ -152,9 +162,10 @@ def predict_file(model, file_path, threshold=0.5, calibrate=True):
         # Apply calibration if enabled
         if calibrate and (pred_val > 0.95 or pred_val < 0.05):
             calibrated_val = calibrate_confidence(pred_val)
-            print(f"  Raw prediction: {pred_val:.6f} (calibrated to {calibrated_val:.6f})")
+            if should_show_progress:
+                print(f"  Raw prediction: {pred_val:.6f} (calibrated to {calibrated_val:.6f})")
             pred_val = calibrated_val
-        else:
+        elif should_show_progress:
             print(f"  Raw prediction: {pred_val:.6f}")
         
         all_predictions.append(pred_val)
@@ -179,6 +190,10 @@ def predict_file(model, file_path, threshold=0.5, calibrate=True):
                     print(f"Layer {layer_name}: min={act_min:.4f}, max={act_max:.4f}, mean={act_mean:.4f}, zeros={act_zeros:.1f}%")
             except Exception as e:
                 print(f"Could not extract activations: {e}")
+    
+    # Print summary statistics
+    print(f"\nProcessed all {len(sweeps)} sweeps.")
+    print(f"Prediction stats: min={np.min(all_predictions):.4f}, max={np.max(all_predictions):.4f}, mean={np.mean(all_predictions):.4f}")
     
     # Calculate average prediction and determine if a plane is present
     # Use a more conservative approach - require multiple sweeps to agree
@@ -297,11 +312,11 @@ def main():
     parser = argparse.ArgumentParser(description="Test a file against a trained Keras model.")
     parser.add_argument('--model', type=str, default='./model/plane_detector_cnn', help='Path to the trained Keras model.')
     parser.add_argument('--file', type=str, required=True, help='Path to the .shr file to test.')
-    parser.add_argument('--threshold', type=float, default=0.4, help='Prediction threshold (default: 0.5).')
+    parser.add_argument('--threshold', type=float, default=0.5, help='Prediction threshold (default: 0.5).')
     parser.add_argument('--visualize', action='store_true', help='Visualize the prediction results.')
     parser.add_argument('--output_dir', type=str, help='Directory to save visualization results.')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode with extra logging.')
-    parser.add_argument('--no_calibration', action='store_true', help='Disable prediction calibration.')
+    parser.add_argument('--calibration', action='store_true', help='Enable prediction calibration (default: disabled).')
     args = parser.parse_args()
     
     # Enable debug information in TensorFlow if requested
@@ -331,8 +346,8 @@ def main():
     print(f"  Std: {np.std(test_batch):.4f}")
     
     # Apply calibration to test predictions
-    calibrate = not args.no_calibration
-    print(f"Prediction calibration: {'Disabled' if args.no_calibration else 'Enabled'}")
+    calibrate = args.calibration
+    print(f"Prediction calibration: {'Enabled' if args.calibration else 'Disabled'}")
     
     print("\nTesting with normalized random noise...")
     test_prediction = model.predict(test_batch, verbose=0)
