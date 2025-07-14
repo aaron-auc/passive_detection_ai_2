@@ -111,36 +111,31 @@ def create_cnn_model(input_shape=(38400, 1)):
     return model
 
 # Add data augmentation function
-def augment_data(X, y):
+def augment_data(X, y, noise_level=0.05, shift_percent=0.05):
     """
-    Apply simple data augmentation techniques to increase training data
+    Apply simple data augmentation techniques to a single sample
+    Returns original plus augmented versions
     """
-    X_augmented = []
-    y_augmented = []
+    X_augmented = [X]  # Start with the original data
+    y_augmented = [y]
     
-    for i in range(len(X)):
-        # Original data
-        X_augmented.append(X[i])
-        y_augmented.append(y[i])
+    # Add random noise
+    noise = np.random.normal(0, noise_level, X.shape)
+    X_augmented.append(X + noise)
+    y_augmented.append(y)
+    
+    # Small time shift
+    shift_amount = int(X.shape[0] * shift_percent)
+    if shift_amount > 0:
+        # Shift right
+        shifted = np.roll(X, shift_amount, axis=0)
+        X_augmented.append(shifted)
+        y_augmented.append(y)
         
-        # Add random noise
-        noise_level = 0.05
-        noise = np.random.normal(0, noise_level, X[i].shape)
-        X_augmented.append(X[i] + noise)
-        y_augmented.append(y[i])
-        
-        # Small time shift (5% of signal length)
-        shift_amount = int(X[i].shape[0] * 0.05)
-        if shift_amount > 0:
-            # Shift right
-            shifted = np.roll(X[i], shift_amount, axis=0)
-            X_augmented.append(shifted)
-            y_augmented.append(y[i])
-            
-            # Shift left
-            shifted = np.roll(X[i], -shift_amount, axis=0)
-            X_augmented.append(shifted)
-            y_augmented.append(y[i])
+        # Shift left
+        shifted = np.roll(X, -shift_amount, axis=0)
+        X_augmented.append(shifted)
+        y_augmented.append(y)
     
     return np.array(X_augmented), np.array(y_augmented)
 
@@ -239,10 +234,10 @@ def load_dataset_cnn(data_dir, label_files):
     
     return X, y
 
-def train_cnn_model(X, y):
+def train_cnn_model(X, y, augment_ratio=0.5):
     """
     Train a CNN model with the prepared dataset
-    Memory-optimized version
+    Memory-optimized version with controlled augmentation
     """
     # Use lower precision to reduce memory usage
     X = X.astype(np.float32)  # Use float32 instead of float64
@@ -257,24 +252,77 @@ def train_cnn_model(X, y):
     import gc
     gc.collect()
     
-    # Apply data augmentation in batches
-    def batch_augment(X_batch, y_batch, batch_size=50):
-        X_aug = []
-        y_aug = []
-        
-        for i in range(0, len(X_batch), batch_size):
-            end = min(i + batch_size, len(X_batch))
-            X_batch_aug, y_batch_aug = augment_data(X_batch[i:end], y_batch[i:end])
-            X_aug.append(X_batch_aug)
-            y_aug.extend(y_batch_aug)
-            # Free memory
-            X_batch_aug = None
-            gc.collect()
-        
-        return np.vstack(X_aug), np.array(y_aug)
+    print(f"Original training set shape: {X_train.shape}")
     
-    print("Augmenting training data...")
-    X_train, y_train = batch_augment(X_train, y_train)
+    # Apply memory-efficient augmentation
+    # Only augment a portion of the data based on augment_ratio
+    if augment_ratio > 0:
+        print(f"Augmenting {int(augment_ratio*100)}% of training data...")
+        
+        # Determine how many samples to augment
+        num_to_augment = int(len(X_train) * augment_ratio)
+        indices_to_augment = np.random.choice(len(X_train), num_to_augment, replace=False)
+        
+        # Initialize lists for augmented data
+        X_train_augmented = []
+        y_train_augmented = []
+        
+        # Process in small batches to avoid memory issues
+        batch_size = 10  # Small batch size to prevent memory overflow
+        
+        # First, add all original samples
+        X_train_augmented.append(X_train)
+        y_train_augmented = list(y_train)
+        
+        # Free original X_train as we've stored it in X_train_augmented
+        X_train_orig = X_train
+        X_train = None
+        gc.collect()
+        
+        # Now augment in small batches
+        for i in range(0, len(indices_to_augment), batch_size):
+            batch_indices = indices_to_augment[i:i+batch_size]
+            
+            # Create augmented versions (excluding the original)
+            batch_X_aug = []
+            batch_y_aug = []
+            
+            for j in batch_indices:
+                # For each sample, generate augmented versions
+                sample_X = X_train_orig[j:j+1]
+                sample_y = y_train[j:j+1]
+                
+                # Get augmented versions only (no original)
+                aug_X, aug_y = augment_data(sample_X[0], sample_y[0])
+                # Skip first element as it's the original
+                batch_X_aug.extend(aug_X[1:])
+                batch_y_aug.extend(aug_y[1:])
+            
+            if batch_X_aug:
+                # Add this batch's augmentations to our collection
+                X_train_augmented.append(np.array(batch_X_aug))
+                y_train_augmented.extend(batch_y_aug)
+                
+                # Free memory
+                batch_X_aug = None
+                batch_y_aug = None
+                gc.collect()
+            
+            # Print progress
+            if (i + batch_size) % (5 * batch_size) == 0 or i + batch_size >= len(indices_to_augment):
+                print(f"  Augmented {min(i + batch_size, len(indices_to_augment))}/{len(indices_to_augment)} samples")
+        
+        # Combine all batches of augmented data
+        X_train = np.vstack(X_train_augmented)
+        y_train = np.array(y_train_augmented)
+        
+        # Free memory
+        X_train_augmented = None
+        y_train_augmented = None
+        X_train_orig = None
+        gc.collect()
+        
+        print(f"Final training set shape after augmentation: {X_train.shape}")
     
     # Create a more memory-efficient model
     model = create_cnn_model(input_shape=(X_train.shape[1], 1))
@@ -391,10 +439,12 @@ def main():
     parser = argparse.ArgumentParser(description="Train a plane detection CNN model.")
     parser.add_argument('--data_dir', type=str, default='./data', help='Directory containing the training data.')
     parser.add_argument('--output_model', type=str, default='./model/plane_detector_cnn', help='Path to save the trained model.')
+    parser.add_argument('--augment_ratio', type=float, default=0.5, help='Percentage of training data to augment (0.0-1.0). Default 0.5')
     args = parser.parse_args()
     
     data_dir = args.data_dir
     output_model = args.output_model
+    augment_ratio = max(0.0, min(1.0, args.augment_ratio))  # Ensure between 0 and 1
     
     #label the data in with_plane and without_plane folders
     label_files = create_label_mapping(data_dir)
@@ -402,8 +452,8 @@ def main():
     #extract features and load the dataset for CNN
     X, y = load_dataset_cnn(data_dir, label_files)
     
-    #train the CNN model
-    model, X_test, y_test = train_cnn_model(X, y)
+    #train the CNN model with controlled augmentation
+    model, X_test, y_test = train_cnn_model(X, y, augment_ratio=augment_ratio)
     
     #save the trained model to the specified output path
     save_model(model, output_model)
