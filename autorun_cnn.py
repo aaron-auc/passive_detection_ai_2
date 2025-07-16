@@ -13,6 +13,8 @@ import threading
 import shutil
 import requests  # Add requests library for HTTP POST requests
 
+APPLICATION_VERSION = "0.1.2"
+
 def get_local_ipv4_address():
     """
     Retrieves the local IPv4 address of the machine.
@@ -25,7 +27,6 @@ def get_local_ipv4_address():
         ipv4_address = socket.gethostbyname(hostname)
         return ipv4_address
     except socket.gaierror:
-        # Handle cases where hostname resolution fails (e.g., no network connection)
         return "Could not determine IPv4 address."
 
 HOST = get_local_ipv4_address()  # Signal Hound IP
@@ -146,6 +147,31 @@ class SignalHoundGUI:
         self.connect_button = ttk.Button(connection_frame, text="Connect", command=self.connect_to_device)
         self.connect_button.pack(side=tk.RIGHT, padx=5)
         
+        # Coordinates section
+        coord_frame = ttk.Frame(config_frame)
+        coord_frame.pack(fill=tk.X, pady=2)
+        
+        # Frame for latitude and longitude inputs
+        input_frame = ttk.Frame(coord_frame)
+        input_frame.pack(fill=tk.X, expand=True)
+        
+        # Latitude input
+        ttk.Label(input_frame, text="Latitude:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.lat_var = tk.StringVar(value="")
+        self.lat_entry = ttk.Entry(input_frame, textvariable=self.lat_var, width=15)
+        self.lat_entry.grid(row=0, column=1, padx=5, pady=0, sticky="w")
+        
+        # Longitude input
+        ttk.Label(input_frame, text="Longitude:").grid(row=0, column=2, padx=5, pady=5, sticky="w")
+        self.lon_var = tk.StringVar(value="")
+        self.lon_entry = ttk.Entry(input_frame, textvariable=self.lon_var, width=15)
+        self.lon_entry.grid(row=0, column=3, padx=5, pady=0, sticky="w")
+        
+        # Send coordinates button
+        input_frame.columnconfigure(4, weight=1) # This makes column 4 expandable
+        self.send_coord_btn = ttk.Button(input_frame, text="Send Coordinates", command=self.send_coordinates)
+        self.send_coord_btn.grid(row=0, column=4, padx=5, pady=0, sticky="e")
+        
         # Model selection
         model_frame = ttk.Frame(config_frame)
         model_frame.pack(fill=tk.X, pady=2)
@@ -187,34 +213,6 @@ class SignalHoundGUI:
         # Label to display current threshold value
         self.threshold_label = ttk.Label(threshold_frame, text=f"{self.prediction_threshold:.2f}")
         self.threshold_label.pack(side=tk.RIGHT, padx=5)
-        
-        # Add a new section for coordinates input
-        coord_frame = ttk.LabelFrame(main_frame, text="Location Coordinates", padding="10")
-        coord_frame.pack(fill=tk.X, pady=5)
-        
-        # Create a frame for latitude and longitude inputs
-        input_frame = ttk.Frame(coord_frame)
-        input_frame.pack(fill=tk.X, expand=True, pady=5)
-        
-        # Latitude input
-        ttk.Label(input_frame, text="Latitude:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
-        self.lat_var = tk.StringVar(value="")
-        self.lat_entry = ttk.Entry(input_frame, textvariable=self.lat_var, width=15)
-        self.lat_entry.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-        
-        # Longitude input
-        ttk.Label(input_frame, text="Longitude:").grid(row=0, column=2, padx=5, pady=5, sticky="w")
-        self.lon_var = tk.StringVar(value="")
-        self.lon_entry = ttk.Entry(input_frame, textvariable=self.lon_var, width=15)
-        self.lon_entry.grid(row=0, column=3, padx=5, pady=5, sticky="w")
-        
-        # Send coordinates button
-        self.send_coord_btn = ttk.Button(input_frame, text="Send Coordinates", command=self.send_coordinates)
-        self.send_coord_btn.grid(row=0, column=4, padx=5, pady=5, sticky="e")
-        
-        # Status label for coordinate submission
-        self.coord_status = ttk.Label(coord_frame, text="No coordinates sent yet")
-        self.coord_status.pack(fill=tk.X, pady=5)
         
         # Recording controls - now including auto-mode options
         control_frame = ttk.LabelFrame(main_frame, text="Recording Controls", padding="10")
@@ -323,7 +321,11 @@ class SignalHoundGUI:
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=5)
-            
+        
+        # Version label
+        self.version_label = ttk.Label(main_frame, text=f"Version: {APPLICATION_VERSION}")
+        self.version_label.pack(side=tk.LEFT, padx=5)
+
         # Auto-mode flags for controlling the loop
         self.auto_mode_running = False
         self.auto_record_only = False
@@ -884,14 +886,11 @@ class SignalHoundGUI:
             response = requests.post('https://pads-website.onrender.com/sensors', json=payload, timeout=5)
 
             if response.status_code == 200 or response.status_code == 201:
-                self.coord_status.config(text=f"Coordinates sent successfully: {lat}, {lon}")
                 self.update_status(f"Coordinates sent successfully: Status code {response.status_code}")
             else:
-                self.coord_status.config(text=f"Failed to send coordinates: Status {response.status_code}")
                 self.update_status(f"Failed to send coordinates. Status code: {response.status_code}", True)
         
         except Exception as e:
-            self.coord_status.config(text=f"Error sending coordinates")
             self.update_status(f"Error sending coordinates: {str(e)}", True)
             traceback.print_exc()
 
