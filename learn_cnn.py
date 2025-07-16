@@ -13,13 +13,11 @@ from tensorflow.keras.layers import Conv1D, MaxPooling1D, Dense, Flatten, Dropou
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
 
-#np.random.seed(42)
-#import random
-#random.seed(42)
-#tf.random.set_seed(42)
-
-#TODO: make sure file is being parsed correctly
 def parse_shr_file(file_path):
+    """
+    Parse a .shr file to extract spectral data as individual sweeps.
+    Each sweep is expected to be 38400 data points long.
+    """
     with open(file_path, 'rb') as f:
         trace_data = np.fromfile(f, dtype=np.float32)
         #skip the first 130 data points, header
@@ -110,7 +108,6 @@ def create_cnn_model(input_shape=(38400, 1)):
     
     return model
 
-# Add data augmentation function
 def augment_data(X, y, noise_level=0.05, shift_percent=0.05):
     """
     Apply simple data augmentation techniques to a single sample
@@ -201,6 +198,7 @@ def load_dataset_cnn(data_dir):
     batch_size = 100
     final_X = []
     
+    # Reshape and normalize the data for CNN input
     for i in range(0, len(X), batch_size):
         batch = X[i:i+batch_size]
         batch_array = np.array(batch).reshape(-1, target_length, 1)
@@ -210,6 +208,7 @@ def load_dataset_cnn(data_dir):
         import gc
         gc.collect()
     
+    # Stack all batches into a single array
     X = np.vstack(final_X)
     y = np.array(y)
     
@@ -305,7 +304,7 @@ def train_cnn_model(X, y, augment_ratio=0.5):
         
         print(f"Final training set shape after augmentation: {X_train.shape}")
     
-    # Create a more memory-efficient model
+    # Create a model
     model = create_cnn_model(input_shape=(X_train.shape[1], 1))
     
     # Use a generator to feed data in batches during training
@@ -317,7 +316,7 @@ def train_cnn_model(X, y, augment_ratio=0.5):
                 batch_indices = indices[i:i + batch_size]
                 yield X_data[batch_indices], y_data[batch_indices]
     
-    # Define callbacks for training with memory optimization
+    # Define callbacks for training
     callbacks = [
         EarlyStopping(
             monitor='val_loss', 
@@ -332,7 +331,7 @@ def train_cnn_model(X, y, augment_ratio=0.5):
             min_lr=0.000001,
             verbose=1
         ),
-        # Add ModelCheckpoint to save best model instead of keeping in memory
+        # ModelCheckpoint to save best model instead of keeping in memory
         tf.keras.callbacks.ModelCheckpoint(
             filepath='./temp_best_model.keras',
             save_best_only=True,
@@ -342,21 +341,20 @@ def train_cnn_model(X, y, augment_ratio=0.5):
     ]
     
     # Calculate steps per epoch based on batch size
-    train_batch_size = 8  # Smaller batch size to reduce memory usage
+    train_batch_size = 8
     steps_per_epoch = len(X_train) // train_batch_size
     validation_steps = len(X_test) // train_batch_size
     
-    # Train the model using a generator - removed problematic parameters
+    # Train the model using a generator
     print("Training CNN model with generators...")
     history = model.fit(
         data_generator(X_train, y_train, train_batch_size),
         steps_per_epoch=steps_per_epoch,
         validation_data=data_generator(X_test, y_test, train_batch_size),
         validation_steps=validation_steps,
-        epochs=30,  # Reduced number of epochs
+        epochs=30,
         callbacks=callbacks,
         verbose=1
-        # Removed use_multiprocessing and workers parameters
     )
     
     # Evaluate the model in batches
@@ -401,6 +399,9 @@ def train_cnn_model(X, y, augment_ratio=0.5):
     return model, X_test, y_test
 
 def save_model(model, output_path):
+    """
+    Save the trained CNN model to a file.
+    """
     output_dir = os.path.dirname(output_path)
     
     if output_dir and not os.path.exists(output_dir):
