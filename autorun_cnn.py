@@ -17,6 +17,7 @@ import requests  # Add requests library for HTTP POST requests
 def get_local_ipv4_address():
     """
     Retrieves the local IPv4 address of the machine.
+    Needed for connecting to the Signal Hound device.
     """
     try:
         # Get the hostname of the local machine
@@ -28,8 +29,8 @@ def get_local_ipv4_address():
         # Handle cases where hostname resolution fails (e.g., no network connection)
         return "Could not determine IPv4 address."
 
-HOST = get_local_ipv4_address()  #signal hound ip
-PORT = 5025  #scpi port
+HOST = get_local_ipv4_address()  # Signal Hound IP
+PORT = 5025  # SCPI port
 
 # Default recording duration - now will be adjustable
 DEFAULT_RECORDING_DURATION = 10  # seconds

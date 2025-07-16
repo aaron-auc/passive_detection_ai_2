@@ -124,13 +124,11 @@ def predict_file(model, file_path, threshold=0.5, calibrate=False):
     all_raw_predictions = []  # Store raw predictions for analysis
     processed_sweeps = []
     
-    # Show progress but not details for every sweep
     print(f"Processing {len(sweeps)} sweeps...")
     
-    # Process all sweeps instead of just the first few
+    # Process all sweeps
     for i, sweep_data in enumerate(sweeps):
-        # Only show progress every 10% of sweeps or for the first and last
-        should_show_progress = (i == 0 or i == len(sweeps)-1 or i % max(1, len(sweeps)//10) == 0)
+        should_show_progress = 1
         
         if should_show_progress:
             print(f"Processing sweep {i+1}/{len(sweeps)}...")
@@ -138,9 +136,8 @@ def predict_file(model, file_path, threshold=0.5, calibrate=False):
         # Preprocess data with proper normalization matching training
         batch = preprocess_for_prediction(sweep_data)
         
-        # Store for visualization - only store the first few for memory efficiency
-        if i < 10:  # Store first 10 processed sweeps for visualization
-            processed_sweeps.append(batch[0].reshape(1, 38400, 1))
+        # Store sweeps for visualization
+        processed_sweeps.append(batch[0].reshape(1, 38400, 1))
         
         # Make prediction with normalized data
         raw_prediction = model.predict(batch)
