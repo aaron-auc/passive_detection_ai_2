@@ -120,7 +120,7 @@ class SignalHoundGUI:
         self.connected = False
         self.recording_thread = None
         self.output_directory = ''
-        self.recording_duration = 10
+        self.recording_duration = 10  # Default recording duration
         self.prediction_threshold = 0.5  # Default threshold for prediction
         
         # Configure the root window
@@ -135,6 +135,16 @@ class SignalHoundGUI:
         # Configuration frame for model and directory selection
         config_frame = ttk.LabelFrame(main_frame, text="Configuration", padding="10")
         config_frame.pack(fill=tk.X, pady=5)
+        
+        # Connection status and button
+        connection_frame = ttk.Frame(config_frame)
+        connection_frame.pack(fill=tk.X, pady=2)
+        
+        self.status_label = ttk.Label(connection_frame, text="Not Connected", foreground="red")
+        self.status_label.pack(side=tk.LEFT, padx=5)
+        
+        self.connect_button = ttk.Button(connection_frame, text="Connect", command=self.connect_to_device)
+        self.connect_button.pack(side=tk.RIGHT, padx=5)
         
         # Model selection
         model_frame = ttk.Frame(config_frame)
@@ -205,17 +215,6 @@ class SignalHoundGUI:
         # Status label for coordinate submission
         self.coord_status = ttk.Label(coord_frame, text="No coordinates sent yet")
         self.coord_status.pack(fill=tk.X, pady=5)
-        
-        # Connection status
-        status_frame = ttk.LabelFrame(main_frame, text="Connection Status", padding="10")
-        status_frame.pack(fill=tk.X, pady=5)
-        
-        self.status_label = ttk.Label(status_frame, text="Not Connected", foreground="red")
-        self.status_label.pack(side=tk.LEFT, padx=5)
-        
-        # Connect button
-        self.connect_button = ttk.Button(status_frame, text="Connect", command=self.connect_to_device)
-        self.connect_button.pack(side=tk.RIGHT, padx=5)
         
         # Recording controls - now including auto-mode options
         control_frame = ttk.LabelFrame(main_frame, text="Recording Controls", padding="10")
@@ -324,14 +323,6 @@ class SignalHoundGUI:
         self.progress_var = tk.DoubleVar()
         self.progress_bar = ttk.Progressbar(main_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill=tk.X, pady=5)
-        
-        # Status bar at bottom
-        self.status_bar = ttk.Label(main_frame, text="Ready", relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.pack(fill=tk.X, side=tk.BOTTOM, pady=5)
-        
-        # If model was provided during init, update the status
-        if self.model:
-            self.log_message(f"Model loaded: {self.model_path}")
             
         # Auto-mode flags for controlling the loop
         self.auto_mode_running = False
@@ -512,7 +503,7 @@ class SignalHoundGUI:
         Update the status bar and log messages
         """
         
-        self.status_bar.config(text=message)
+        #self.status_bar.config(text=message)
         if is_error:
             self.log_message(f"ERROR: {message}")
         else:
@@ -529,6 +520,9 @@ class SignalHoundGUI:
         self.result_text.config(state=tk.DISABLED)
     
     def connect_to_device(self):
+        """
+        Connect to the spectrum analyzer using SPIKE
+        """
         if self.connected:
             self.disconnect_from_device()
             return
@@ -563,6 +557,9 @@ class SignalHoundGUI:
                 self.socket = None
     
     def disconnect_from_device(self):
+        """
+        Disconnect from the spectrum analyzer
+        """
         if self.socket:
             try:
                 self.socket.close()
