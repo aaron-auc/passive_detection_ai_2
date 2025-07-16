@@ -4,11 +4,13 @@ import os
 import argparse
 import tensorflow as tf
 from tensorflow import keras
-#from tensorflow.keras.models import load_model
 import time
 
-# Reuse the SHR file parser from learn_cnn.py
 def parse_shr_file(file_path):
+    """
+    Parse a .shr file to extract spectral data as individual sweeps.
+    Each sweep is expected to be 38400 data points long.
+    """
     with open(file_path, 'rb') as f:
         trace_data = np.fromfile(f, dtype=np.float32)
         #skip the first 130 data points, header
@@ -32,7 +34,7 @@ def parse_shr_file(file_path):
         
         return sweeps  # Return a list of individual sweeps
 
-def preprocess_for_prediction(sweep_data, target_length=38400, verbose=False):
+def preprocess_for_prediction(sweep_data, target_length=38400):
     """
     Preprocess a single sweep for prediction with multiple normalization options
     """
@@ -42,15 +44,8 @@ def preprocess_for_prediction(sweep_data, target_length=38400, verbose=False):
     else:
         data = np.pad(sweep_data, (0, max(0, target_length - len(sweep_data))))
     
-    # Print raw data stats for debugging only in verbose mode
-    if verbose:
-        print(f"Raw data stats: min={np.min(data):.4f}, max={np.max(data):.4f}, mean={np.mean(data):.4f}")
-    
     # Apply the same normalization used during training
     normalized_data = (data - np.mean(data)) / (np.std(data) + 1e-10)
-    
-    if verbose:
-        print(f"Normalized data stats: min={np.min(normalized_data):.4f}, max={np.max(normalized_data):.4f}, mean={np.mean(normalized_data):.4f}")
     
     # Return normalized data reshaped for model input
     return np.stack([normalized_data.reshape(target_length, 1)])
@@ -140,15 +135,15 @@ def predict_file(model, file_path, threshold=0.5, calibrate=False):
         if should_show_progress:
             print(f"Processing sweep {i+1}/{len(sweeps)}...")
         
-        # Preprocess data with proper normalization matching training - verbose only for first sweep
-        batch = preprocess_for_prediction(sweep_data, verbose=(i==0))
+        # Preprocess data with proper normalization matching training
+        batch = preprocess_for_prediction(sweep_data)
         
         # Store for visualization - only store the first few for memory efficiency
         if i < 10:  # Store first 10 processed sweeps for visualization
             processed_sweeps.append(batch[0].reshape(1, 38400, 1))
         
         # Make prediction with normalized data
-        raw_prediction = model.predict(batch, verbose=0)
+        raw_prediction = model.predict(batch)
         
         # Extract the prediction value
         if isinstance(raw_prediction, list):
@@ -309,21 +304,15 @@ def visualize_prediction(result, file_path, output_dir=None):
     plt.close()
 
 def main():
+    # Argument parser for command line options
     parser = argparse.ArgumentParser(description="Test a file against a trained Keras model.")
     parser.add_argument('--model', type=str, default='./model/plane_detector_cnn', help='Path to the trained Keras model.')
     parser.add_argument('--file', type=str, required=True, help='Path to the .shr file to test.')
     parser.add_argument('--threshold', type=float, default=0.5, help='Prediction threshold (default: 0.5).')
     parser.add_argument('--visualize', action='store_true', help='Visualize the prediction results.')
     parser.add_argument('--output_dir', type=str, help='Directory to save visualization results.')
-    parser.add_argument('--debug', action='store_true', help='Enable debug mode with extra logging.')
     parser.add_argument('--calibration', action='store_true', help='Enable prediction calibration (default: disabled).')
     args = parser.parse_args()
-    
-    # Enable debug information in TensorFlow if requested
-    if args.debug:
-        tf.config.run_functions_eagerly(True)
-        os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
-        print("Debug mode enabled")
     
     # Load the model
     model = load_keras_model(args.model)
@@ -350,7 +339,7 @@ def main():
     print(f"Prediction calibration: {'Enabled' if args.calibration else 'Disabled'}")
     
     print("\nTesting with normalized random noise...")
-    test_prediction = model.predict(test_batch, verbose=0)
+    test_prediction = model.predict(test_batch)
     raw_pred_val = test_prediction[0][0] if isinstance(test_prediction, np.ndarray) else test_prediction[0]
     
     if calibrate:
@@ -367,7 +356,7 @@ def main():
     extreme_test[0, :, 0] = pattern
     
     print("\nTesting with normalized extreme pattern...")
-    extreme_prediction = model.predict(extreme_test, verbose=0)
+    extreme_prediction = model.predict(extreme_test)
     extreme_pred_val = extreme_prediction[0][0] if isinstance(extreme_prediction, np.ndarray) else extreme_prediction[0]
     print(f"Extreme pattern prediction: {extreme_pred_val}")
     
