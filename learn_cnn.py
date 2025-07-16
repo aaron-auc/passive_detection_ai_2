@@ -139,35 +139,18 @@ def augment_data(X, y, noise_level=0.05, shift_percent=0.05):
     
     return np.array(X_augmented), np.array(y_augmented)
 
-def create_label_mapping(data_dir):
-    label_files = {}
-    
-    #files in with_plane folder are labeled as 1
-    with_plane_dir = os.path.join(data_dir, 'with_plane')
-    if os.path.exists(with_plane_dir):
-        for filepath in glob.glob(os.path.join(with_plane_dir, '*.shr')):
-            filename = os.path.basename(filepath)
-            label_files[filename] = 1
-    
-    #files in without_plane folder are labeled as 0
-    without_plane_dir = os.path.join(data_dir, 'without_plane')
-    if os.path.exists(without_plane_dir):
-        for filepath in glob.glob(os.path.join(without_plane_dir, '*.shr')):
-            filename = os.path.basename(filepath)
-            label_files[filename] = 0
-            
-    print(f"Found {sum(label_files.values())} files with planes and {len(label_files) - sum(label_files.values())} files without planes.")
-    
-    return label_files
-
-def load_dataset_cnn(data_dir, label_files):
+def load_dataset_cnn(data_dir):
     """
     Load dataset and prepare it for CNN training
-    Memory-optimized version
     """
     X = []
     y = []
     target_length = 38400  # Updated target length for all samples
+    
+    # Print the number of files found in each directory
+    with_plane_count = len(glob.glob(os.path.join(data_dir, 'with_plane', '*.shr')))
+    without_plane_count = len(glob.glob(os.path.join(data_dir, 'without_plane', '*.shr')))
+    print(f"Found {with_plane_count} files with planes and {without_plane_count} files without planes.")
     
     # Process files in batch to reduce memory consumption
     def process_directory(directory, label):
@@ -180,20 +163,18 @@ def load_dataset_cnn(data_dir, label_files):
             batch_y = []
             
             for filepath in batch_files:
-                filename = os.path.basename(filepath)
-                if filename in label_files:
-                    sweeps = parse_shr_file(filepath)
-                    for sweep_data in sweeps:
-                        # Pad if necessary
-                        if len(sweep_data) < target_length:
-                            sweep_data = np.pad(sweep_data, (0, target_length - len(sweep_data)))
-                        elif len(sweep_data) > target_length:
-                            sweep_data = sweep_data[:target_length]
+                sweeps = parse_shr_file(filepath)
+                for sweep_data in sweeps:
+                    # Pad if necessary
+                    if len(sweep_data) < target_length:
+                        sweep_data = np.pad(sweep_data, (0, target_length - len(sweep_data)))
+                    elif len(sweep_data) > target_length:
+                        sweep_data = sweep_data[:target_length]
                         
-                        # Normalize data early to save memory
-                        sweep_data = (sweep_data - np.mean(sweep_data)) / (np.std(sweep_data) + 1e-10)
-                        batch_X.append(sweep_data)
-                        batch_y.append(label)
+                    # Normalize data early to save memory
+                    sweep_data = (sweep_data - np.mean(sweep_data)) / (np.std(sweep_data) + 1e-10)
+                    batch_X.append(sweep_data)
+                    batch_y.append(label)
             
             # Convert batch to numpy array and append
             if batch_X:
@@ -435,7 +416,7 @@ def save_model(model, output_path):
     print(f"CNN model saved to {output_path}")
 
 def main():
-    #argument parser for command line options
+    # Argument parser for command line options
     parser = argparse.ArgumentParser(description="Train a plane detection CNN model.")
     parser.add_argument('--data_dir', type=str, default='./data', help='Directory containing the training data.')
     parser.add_argument('--output_model', type=str, default='./model/plane_detector_cnn', help='Path to save the trained model.')
@@ -445,17 +426,14 @@ def main():
     data_dir = args.data_dir
     output_model = args.output_model
     augment_ratio = max(0.0, min(1.0, args.augment_ratio))  # Ensure between 0 and 1
-    
-    #label the data in with_plane and without_plane folders
-    label_files = create_label_mapping(data_dir)
-    
-    #extract features and load the dataset for CNN
-    X, y = load_dataset_cnn(data_dir, label_files)
-    
-    #train the CNN model with controlled augmentation
+
+    # Extract features and load the dataset for CNN
+    X, y = load_dataset_cnn(data_dir)
+
+    # Train the CNN model with controlled augmentation
     model, X_test, y_test = train_cnn_model(X, y, augment_ratio=augment_ratio)
-    
-    #save the trained model to the specified output path
+
+    # Save the trained model to the specified output path
     save_model(model, output_model)
 
 if __name__ == "__main__":
