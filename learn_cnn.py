@@ -13,10 +13,10 @@ from tensorflow.keras.layers import Conv1D, MaxPooling1D, Dense, Flatten, Dropou
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
 
-np.random.seed(42)
-import random
-random.seed(42)
-tf.random.set_seed(42)
+#np.random.seed(42)
+#import random
+#random.seed(42)
+#tf.random.set_seed(42)
 
 #TODO: make sure file is being parsed correctly
 def parse_shr_file(file_path):

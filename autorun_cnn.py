@@ -120,6 +120,7 @@ class SignalHoundGUI:
         self.recording_thread = None
         self.output_directory = 'C:\\Users\\Kai\\repos\\passive_detection_ai\\recordings\\'
         self.recording_duration = DEFAULT_RECORDING_DURATION
+        self.prediction_threshold = 0.5  # Default threshold for prediction
         
         # Configure the root window
         root.title("PADS Autorun CNN")
@@ -155,6 +156,26 @@ class SignalHoundGUI:
         
         self.select_dir_btn = ttk.Button(dir_frame, text="Select Directory", command=self.select_directory)
         self.select_dir_btn.pack(side=tk.RIGHT, padx=5)
+        
+        # Add threshold slider
+        threshold_frame = ttk.Frame(config_frame)
+        threshold_frame.pack(fill=tk.X, pady=2)
+        
+        ttk.Label(threshold_frame, text="Prediction Threshold:").pack(side=tk.LEFT, padx=5)
+        self.threshold_var = tk.DoubleVar(value=self.prediction_threshold)
+        self.threshold_slider = ttk.Scale(
+            threshold_frame, 
+            from_=0.1, 
+            to=0.9,
+            orient=tk.HORIZONTAL, 
+            variable=self.threshold_var,
+            command=self.update_threshold
+        )
+        self.threshold_slider.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+        
+        # Label to display current threshold value
+        self.threshold_label = ttk.Label(threshold_frame, text=f"{self.prediction_threshold:.2f}")
+        self.threshold_label.pack(side=tk.RIGHT, padx=5)
         
         # Add a new section for coordinates input
         coord_frame = ttk.LabelFrame(main_frame, text="Location Coordinates", padding="10")
@@ -326,6 +347,17 @@ class SignalHoundGUI:
                 self.duration_var.set(1)  # Minimum value
         except:
             self.duration_var.set(self.recording_duration)  # Reset to current value
+    
+    def update_threshold(self, *args):
+        """Update the prediction threshold when the slider changes"""
+        try:
+            threshold = self.threshold_var.get()
+            self.prediction_threshold = threshold
+            self.threshold_label.config(text=f"{threshold:.2f}")
+            self.log_message(f"Prediction threshold set to {self.prediction_threshold:.2f}")
+        except Exception as e:
+            self.update_status(f"Error updating threshold: {str(e)}", True)
+            self.threshold_var.set(self.prediction_threshold)  # Reset to current value
     
     def toggle_auto_mode(self):
         """Toggle auto recording and analysis mode"""
@@ -625,10 +657,14 @@ class SignalHoundGUI:
             newest_file = max(files, key=os.path.getmtime)
             self.update_status(f"Auto-analyzing file: {newest_file}")
             
-            # Run CNN prediction
+            # Run CNN prediction with current threshold
             if self.model:
                 self.update_status("Running CNN prediction...")
-                prediction, confidence, confidence_factor = predict_file_cnn(self.model, newest_file, threshold=0.5)
+                prediction, confidence, confidence_factor = predict_file_cnn(
+                    self.model, 
+                    newest_file, 
+                    threshold=self.prediction_threshold
+                )
                 
                 if prediction is not None:
                     if prediction == 1:
@@ -729,10 +765,14 @@ class SignalHoundGUI:
             shutil.move(newest_file, destination)
             self.update_status(f"Moved file to {destination}")
             
-            # Run CNN prediction
+            # Run CNN prediction with current threshold
             if self.model:
                 self.update_status("Running CNN prediction...")
-                prediction, confidence, confidence_factor = predict_file_cnn(self.model, destination, threshold=0.5)
+                prediction, confidence, confidence_factor = predict_file_cnn(
+                    self.model, 
+                    destination, 
+                    threshold=self.prediction_threshold
+                )
                 
                 if prediction is not None:
                     if prediction == 1:
