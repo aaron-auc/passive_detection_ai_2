@@ -13,7 +13,6 @@ import threading
 import shutil
 import requests  # Add requests library for HTTP POST requests
 
-# Get local ipv4 address
 def get_local_ipv4_address():
     """
     Retrieves the local IPv4 address of the machine.
@@ -32,11 +31,10 @@ def get_local_ipv4_address():
 HOST = get_local_ipv4_address()  # Signal Hound IP
 PORT = 5025  # SCPI port
 
-# Default recording duration - now will be adjustable
-DEFAULT_RECORDING_DURATION = 10  # seconds
-
-#function to load the CNN model
 def load_cnn_model(model_path):
+    """
+    Load a CNN model from the specified path.
+    """
     try:
         # Try standard loading first
         model = keras.models.load_model(model_path)
@@ -58,13 +56,15 @@ def load_cnn_model(model_path):
             traceback.print_exc()
             return None
 
-#function to predict using the CNN model
 def predict_file_cnn(model, file_path, threshold=0.5):
+    """
+    Predict if a file contains a plane using the CNN model.
+    """
     try:
         # Parse the file to get sweeps
         sweeps = parse_shr_file(file_path)
-        
-        #check if spectral_data is valid
+
+        # Check if spectral_data is valid
         if sweeps is None or len(sweeps) == 0:
             print(f"Error: No spectral data found in {file_path}")
             return None, None, None
@@ -111,16 +111,16 @@ def predict_file_cnn(model, file_path, threshold=0.5):
         return None, None, None
 
 class SignalHoundGUI:
-    def __init__(self, root, default_model=None):
+    def __init__(self, root):
         self.root = root
-        self.model = default_model
-        self.model_path = './model/car_3sec_model.keras' if default_model else None
+        self.model = None
+        self.model_path = ''
         self.is_recording = False
         self.socket = None
         self.connected = False
         self.recording_thread = None
-        self.output_directory = 'C:\\Users\\Kai\\repos\\passive_detection_ai\\recordings\\'
-        self.recording_duration = DEFAULT_RECORDING_DURATION
+        self.output_directory = ''
+        self.recording_duration = 10
         self.prediction_threshold = 0.5  # Default threshold for prediction
         
         # Configure the root window
@@ -152,7 +152,7 @@ class SignalHoundGUI:
         dir_frame.pack(fill=tk.X, pady=2)
         
         ttk.Label(dir_frame, text="Output Dir:").pack(side=tk.LEFT, padx=5)
-        self.dir_label = ttk.Label(dir_frame, text=self.output_directory)
+        self.dir_label = ttk.Label(dir_frame, text="No directory selected")
         self.dir_label.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
         
         self.select_dir_btn = ttk.Button(dir_frame, text="Select Directory", command=self.select_directory)
@@ -213,6 +213,7 @@ class SignalHoundGUI:
         self.status_label = ttk.Label(status_frame, text="Not Connected", foreground="red")
         self.status_label.pack(side=tk.LEFT, padx=5)
         
+        # Connect button
         self.connect_button = ttk.Button(status_frame, text="Connect", command=self.connect_to_device)
         self.connect_button.pack(side=tk.RIGHT, padx=5)
         
@@ -479,16 +480,21 @@ class SignalHoundGUI:
                 traceback.print_exc()
     
     def select_directory(self):
-        """Open dialog to select output directory"""
+        """
+        Open dialog to select output directory
+        """
+        
+        # Opens dialog to select the output directory
         directory = filedialog.askdirectory(
             title="Select Output Directory",
             initialdir=self.output_directory
         )
         
-        if directory:  # If a directory was selected (not canceled)
+        if directory:  # If a directory was selected
             self.output_directory = directory
             if not self.output_directory.endswith(os.sep):
-                self.output_directory += os.sep
+                self.output_directory += os.sep  # Ensure it ends with a separator
+            # Update the label and status
             self.dir_label.config(text=self.output_directory)
             self.update_status(f"Output directory set to: {self.output_directory}")
             
@@ -502,6 +508,10 @@ class SignalHoundGUI:
                     self.update_status(f"Failed to update directory on device: {str(e)}", True)
 
     def update_status(self, message, is_error=False):
+        """
+        Update the status bar and log messages
+        """
+        
         self.status_bar.config(text=message)
         if is_error:
             self.log_message(f"ERROR: {message}")
@@ -509,6 +519,10 @@ class SignalHoundGUI:
             self.log_message(message)
     
     def log_message(self, message):
+        """
+        Append a message to the log
+        """
+        
         self.result_text.config(state=tk.NORMAL)
         self.result_text.insert(tk.END, f"{message}\n")
         self.result_text.see(tk.END)
@@ -525,6 +539,7 @@ class SignalHoundGUI:
             self.socket.sendall(b'*IDN?\n')
             response = self.socket.recv(1024).decode('utf-8')
             
+            # Update UI to reflect connection
             self.status_label.config(text="Connected", foreground="green")
             self.connect_button.config(text="Disconnect")
             self.record_button.state(['!disabled'])
@@ -555,6 +570,7 @@ class SignalHoundGUI:
                 pass
             self.socket = None
         
+        # Update UI to reflect disconnection
         self.status_label.config(text="Disconnected", foreground="red")
         self.connect_button.config(text="Connect")
         self.record_button.state(['disabled'])
@@ -830,7 +846,9 @@ class SignalHoundGUI:
             self.root.destroy()
 
     def send_coordinates(self):
-        """Send the latitude and longitude coordinates as a POST request"""
+        """
+        Send the latitude and longitude coordinates as a POST request
+        """
         try:
             # Get the latitude and longitude values
             lat = self.lat_var.get().strip()
@@ -880,20 +898,8 @@ class SignalHoundGUI:
             self.update_status(f"Error sending coordinates: {str(e)}", True)
             traceback.print_exc()
 
-# Load the CNN model
-default_model_path = './model/car_3sec_model.keras'
-try:
-    # Try to load default model, but don't fail if it's not there
-    # The user can select a model later through the UI
-    cnn_model = load_cnn_model(default_model_path)
-    if not cnn_model:
-        print("Default model not loaded, you can select a model in the UI")
-except Exception as e:
-    print(f"Error loading default CNN model: {str(e)}")
-    cnn_model = None
-
 # Start the GUI
 if __name__ == "__main__":
     root = tk.Tk()
-    app = SignalHoundGUI(root, cnn_model)
+    app = SignalHoundGUI(root)
     root.mainloop()
