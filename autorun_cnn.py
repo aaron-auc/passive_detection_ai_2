@@ -688,18 +688,7 @@ class SignalHoundGUI:
                         self.update_status(result)
                         
                         # Send POST request for aircraft detection
-                        try:
-                            payload = {
-                                # Round confidence to 2 decimal places for better readability
-                                'confidence': round(float(confidence * 100), 2)
-                            }
-                            response = requests.post('https://pads-website.onrender.com/signals', json=payload, timeout=5)
-                            if response.status_code == 200:
-                                self.update_status(f"Notification sent successfully: {response.status_code}")
-                            else:
-                                self.update_status(f"Notification failed with status code: {response.status_code}", True)
-                        except Exception as e:
-                            self.update_status(f"Failed to send detection notification: {str(e)}", True)
+                        self.send_detection(confidence)
                     else:
                         result = f"AUTO-DETECTED: NO PLANE with {1-confidence:.4f} confidence (factor: {confidence_factor:.2f})"
                         self.update_status(result)
@@ -796,18 +785,7 @@ class SignalHoundGUI:
                         self.update_status(result)
                         
                         # Send POST request for aircraft detection
-                        try:
-                            payload = {
-                                # Round confidence to 2 decimal places for better readability
-                                'confidence': round(float(confidence * 100), 2)
-                            }
-                            response = requests.post('https://pads-website.onrender.com/signals', json=payload, timeout=5)
-                            if response.status_code == 200:
-                                self.update_status(f"Notification sent successfully: {response.status_code}")
-                            else:
-                                self.update_status(f"Notification failed with status code: {response.status_code}", True)
-                        except Exception as e:
-                            self.update_status(f"Failed to send detection notification: {str(e)}", True)
+                        self.send_detection(confidence)
                     else:
                         result = f"NO PLANE DETECTED with {1-confidence:.4f} confidence (factor: {confidence_factor:.2f})"
                         self.update_status(result)
@@ -862,7 +840,7 @@ class SignalHoundGUI:
                 lat_float = float(lat)
                 lon_float = float(lon)
                 
-                # Basic validation of coordinates
+                # Make sure coordinates are within valid ranges
                 if lat_float < -90 or lat_float > 90:
                     messagebox.showerror("Error", "Latitude must be between -90 and 90 degrees")
                     return
@@ -893,6 +871,23 @@ class SignalHoundGUI:
         except Exception as e:
             self.update_status(f"Error sending coordinates: {str(e)}", True)
             traceback.print_exc()
+
+    def send_detection(self, confidence):
+        """
+        Send detection confidence to the server
+        """
+        try:
+            payload = {
+                # Round confidence to 2 decimal places for better readability
+                'confidence': round(float(confidence * 100), 2)
+            }
+            response = requests.post('https://pads-website.onrender.com/signals', json=payload, timeout=5)
+            if response.status_code == 200:
+                self.update_status(f"Notification sent successfully: {response.status_code}")
+            else:
+                self.update_status(f"Notification failed with status code: {response.status_code}", True)
+        except Exception as e:
+            self.update_status(f"Failed to send detection notification: {str(e)}", True)
 
 # Start the GUI
 if __name__ == "__main__":
