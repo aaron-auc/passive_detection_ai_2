@@ -300,16 +300,73 @@ def visualize_prediction(result, file_path, output_dir=None):
     
     plt.close()
 
+def process_directory(model, directory, threshold=0.5, calibrate=False, visualize=False, output_dir=None):
+    """
+    Process all .shr files in a directory
+    """
+    print(f"Processing all .shr files in directory: {directory}")
+    results = {}
+    
+    # Get all .shr files in the directory
+    shr_files = [f for f in os.listdir(directory) if f.lower().endswith('.shr')]
+    
+    if not shr_files:
+        print("No .shr files found in the directory.")
+        return results
+    
+    print(f"Found {len(shr_files)} .shr files to process.")
+    
+    # Process each file
+    for i, filename in enumerate(shr_files):
+        file_path = os.path.join(directory, filename)
+        print(f"\n[{i+1}/{len(shr_files)}] Processing {filename}...")
+        
+        # Process the file
+        start_time = time.time()
+        result = predict_file(model, file_path, threshold, calibrate=calibrate)
+        prediction_time = time.time() - start_time
+        
+        if result:
+            # Store results
+            results[filename] = result
+            
+            # Print summary
+            print(f"File: {filename}")
+            print(f"Sweeps analyzed: {result['sweeps']}")
+            print(f"Raw average prediction: {result['average']:.4f}")
+            print(f"Adjusted prediction: {result['adjusted_average']:.4f}")
+            print(f"Decision: {'PLANE DETECTED' if result['has_plane'] else 'NO PLANE DETECTED'}")
+            print(f"Processing time: {prediction_time:.2f} seconds")
+            
+            # Visualize if requested
+            if visualize:
+                visualize_prediction(result, file_path, output_dir)
+    
+    # Print summary of all results
+    print("\n" + "="*50)
+    print(f"Processed {len(results)} files")
+    planes_detected = sum(1 for r in results.values() if r['has_plane'])
+    print(f"Files with planes detected: {planes_detected}")
+    print(f"Files without planes detected: {len(results) - planes_detected}")
+    print("="*50)
+    
+    return results
+
 def main():
     # Argument parser for command line options
-    parser = argparse.ArgumentParser(description="Test a file against a trained Keras model.")
+    parser = argparse.ArgumentParser(description="Test file(s) against a trained Keras model.")
     parser.add_argument('--model', type=str, default='./model/plane_detector_cnn', help='Path to the trained Keras model.')
-    parser.add_argument('--file', type=str, required=True, help='Path to the .shr file to test.')
+    parser.add_argument('--file', type=str, help='Path to the .shr file to test.')
+    parser.add_argument('--dir', type=str, help='Directory containing .shr files to process.')
     parser.add_argument('--threshold', type=float, default=0.5, help='Prediction threshold (default: 0.5).')
     parser.add_argument('--visualize', action='store_true', help='Visualize the prediction results.')
     parser.add_argument('--output_dir', type=str, help='Directory to save visualization results.')
     parser.add_argument('--calibration', action='store_true', help='Enable prediction calibration (default: disabled).')
     args = parser.parse_args()
+    
+    # Ensure either --file or --dir is provided
+    if not args.file and not args.dir:
+        parser.error("Either --file or --dir must be specified.")
     
     # Load the model
     model = load_keras_model(args.model)
@@ -357,26 +414,32 @@ def main():
     extreme_pred_val = extreme_prediction[0][0] if isinstance(extreme_prediction, np.ndarray) else extreme_prediction[0]
     print(f"Extreme pattern prediction: {extreme_pred_val}")
     
-    # Make prediction on actual file
-    print("\nProcessing actual file...")
-    start_time = time.time()
-    result = predict_file(model, args.file, args.threshold, calibrate=calibrate)
-    prediction_time = time.time() - start_time
+    # Process file or directory
+    if args.file:
+        # Make prediction on a single file
+        print("\nProcessing file...")
+        start_time = time.time()
+        result = predict_file(model, args.file, args.threshold, calibrate=calibrate)
+        prediction_time = time.time() - start_time
+        
+        # Print results
+        print("\n" + "="*50)
+        print(f"File: {os.path.basename(args.file)}")
+        print(f"Sweeps analyzed: {result['sweeps']}")
+        print(f"Raw average prediction: {result['average']:.4f}")
+        print(f"Adjusted prediction: {result['adjusted_average']:.4f}")
+        print(f"Prediction consistency: {result['consistency']:.4f}")
+        print(f"Decision: {'PLANE DETECTED' if result['has_plane'] else 'NO PLANE DETECTED'}")
+        print(f"Processing time: {prediction_time:.2f} seconds")
+        print("="*50)
+        
+        # Visualize if requested
+        if args.visualize:
+            visualize_prediction(result, args.file, args.output_dir)
     
-    # Print results
-    print("\n" + "="*50)
-    print(f"File: {os.path.basename(args.file)}")
-    print(f"Sweeps analyzed: {result['sweeps']}")
-    print(f"Raw average prediction: {result['average']:.4f}")
-    print(f"Adjusted prediction: {result['adjusted_average']:.4f}")
-    print(f"Prediction consistency: {result['consistency']:.4f}")
-    print(f"Decision: {'PLANE DETECTED' if result['has_plane'] else 'NO PLANE DETECTED'}")
-    print(f"Processing time: {prediction_time:.2f} seconds")
-    print("="*50)
-    
-    # Visualize if requested
-    if args.visualize:
-        visualize_prediction(result, args.file, args.output_dir)
+    elif args.dir:
+        # Process all files in the directory
+        process_directory(model, args.dir, args.threshold, calibrate, args.visualize, args.output_dir)
 
 if __name__ == "__main__":
     main()
