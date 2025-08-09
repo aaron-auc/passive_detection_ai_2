@@ -1,0 +1,10 @@
+{
+  "client_id": "???-api-client",
+  "client_secret": "????",
+  "sensor_lat": 28.7775,
+  "sensor_lon": -81.3070,
+  "antenna_azimuth": 90,
+  "beam_width": 360,
+  "radius_km": 15
+}
+
