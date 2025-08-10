@@ -1,10 +1,28 @@
 {
-  "client_id": "???-api-client",
-  "client_secret": "????",
-  "sensor_lat": 28.7775,
-  "sensor_lon": -81.3070,
-  "antenna_azimuth": 90,
-  "beam_width": 360,
-  "radius_km": 15
+  "auth": {
+    "mode": "auto",
+    "client_id": "secret-api-client",
+    "client_secret": "secret",
+    "username": "username",
+    "password": "password",
+    "token_url": "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token",
+    "token_cache_file": ".opensky_token.json"
+  },
+  "api": {
+    "base_url": "https://opensky-network.org/api",
+    "timeout_seconds": 10
+  },
+  "retry": {
+    "total": 5,
+    "backoff_factor": 1.0,
+    "status_forcelist": [429, 500, 502, 503, 504],
+    "raise_on_status": false
+  },
+  "sensor": {
+    "lat": 28.7775,
+    "lon": -81.3070,
+    "azimuth": 90,
+    "beam_width": 360,
+    "radius_km": 15
+  }
 }
-
