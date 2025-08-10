@@ -66,6 +66,9 @@ DEFAULT_AUTH_URL = "https://auth.opensky-network.org/auth/realms/opensky-network
 DEFAULT_TIMEOUT = 30
 DEFAULT_STATUS_FORCELIST = (429, 500, 502, 503, 504)
 
+
+# ----------------------------- Robust OpenSky Client -----------------------------
+
 @dataclass
 class RetryConfig:
     total: int = 5
@@ -299,6 +302,47 @@ def calculate_bearing(lat1, lon1, lat2, lon2) -> float:
     return (math.degrees(math.atan2(x, y)) + 360) % 360
 
 
+def calculate_ground_distance(lat1, lon1, lat2, lon2) -> float:
+    """
+    Calculate ground distance between two points using Haversine formula.
+    Returns distance in kilometers.
+    """
+    if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
+        return None
+
+    # Convert latitude and longitude from degrees to radians
+    lat1, lon1, lat2, lon2 = map(math.radians, [lat1, lon1, lat2, lon2])
+
+    # Haversine formula
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat/2)**2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon/2)**2
+    c = 2 * math.asin(math.sqrt(a))
+
+    # Radius of earth in kilometers
+    r = 6371
+    return c * r
+
+
+def calculate_3d_distance(lat1, lon1, alt1, lat2, lon2, alt2) -> float:
+    """
+    Calculate 3D distance between two points including altitude.
+    Altitudes should be in meters, returns distance in kilometers.
+    """
+    ground_dist = calculate_ground_distance(lat1, lon1, lat2, lon2)
+    if ground_dist is None or alt1 is None or alt2 is None:
+        return None
+
+    # Convert altitude difference to kilometers
+    alt_diff_km = abs(alt2 - alt1) / 1000.0
+
+    # Convert ground distance to meters for calculation
+    ground_dist_km = ground_dist
+
+    # Pythagorean theorem in 3D
+    return math.sqrt(ground_dist_km**2 + alt_diff_km**2)
+
+
 def is_within_beam(sensor_lat, sensor_lon, target_lat, target_lon, azimuth, beam_width) -> bool:
     if target_lat is None or target_lon is None:
         return False
@@ -355,6 +399,10 @@ def filter_in_beam(data: Dict[str, Any], sensor_lat: float, sensor_lon: float,
         if max_alt is not None and (alt is not None and alt > max_alt):
             continue
         bearing = calculate_bearing(sensor_lat, sensor_lon, lat, lon) if lat and lon else None
+        ground_dist_km = calculate_ground_distance(sensor_lat, sensor_lon, lat, lon) if lat and lon else None
+        # For 3D distance, assume sensor is at ground level (0m altitude)
+        distance_3d_km = calculate_3d_distance(sensor_lat, sensor_lon, 0, lat, lon, alt) if lat and lon and alt is not None else None
+
         results.append({
             "icao24": s[0],
             "callsign": callsign,
@@ -362,6 +410,8 @@ def filter_in_beam(data: Dict[str, Any], sensor_lat: float, sensor_lon: float,
             "lon": lon,
             "baro_alt_m": alt,
             "bearing_deg": bearing,
+            "ground_distance_km": ground_dist_km,
+            "distance_3d_km": distance_3d_km,
             "velocity_ms": s[9],
             "heading_deg": s[10],
         })
@@ -577,7 +627,7 @@ def main():
         with open(csv_name, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=[
                 "icao24", "callsign", "lat", "lon", "baro_alt_m",
-                "bearing_deg", "velocity_ms", "heading_deg",
+                "bearing_deg", "ground_distance_km", "distance_3d_km", "velocity_ms", "heading_deg",
                 "registration", "manufacturericao", "model", "typecode"
             ])
             writer.writeheader()
